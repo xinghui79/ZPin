@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFontComboBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import app_icon
 import config
 import defaults
 import history
@@ -164,12 +166,13 @@ def _page(form: QFormLayout) -> QWidget:
 
 def _restore_row(dialog: PreferencesDialog, title: str,
                  prefixes: tuple[str, ...]) -> QWidget:
-    """页面底部「仅恢复本页」按钮。prefixes 匹配 defaults.DEFAULTS 的键前缀。"""
+    """页面底部「恢复默认」按钮；作用于当前页（页名只在确认弹窗里交代）。"""
     row = QWidget()
     lay = QHBoxLayout(row)
     lay.setContentsMargins(0, 6, 0, 0)
     lay.addStretch(1)
-    btn = QPushButton(f"恢复「{title}」默认")
+    btn = QPushButton("恢复默认")
+    btn.setToolTip(f"把本页（{title}）的全部设置恢复为默认值，其它页不受影响")
     btn.setCursor(Qt.PointingHandCursor)
     btn.clicked.connect(lambda: dialog.restore_page(title, prefixes))
     lay.addWidget(btn)
@@ -305,9 +308,10 @@ def build_output(dialog: PreferencesDialog | None = None) -> QWidget:
     q_tip.setWordWrap(True)
     form.addRow("", q_tip)
     form.addRow("", BoundCheck("记住上次保存的格式", "Output/remember_ext"))
-    form.addRow("另存为默认目录", _dir_picker_row("Output/default_dir", "选择保存目录"))
+    form.addRow("默认保存目录", _dir_picker_row("Output/default_dir", "选择保存目录"))
 
-    tip_save = QLabel("截图保存与贴图另存为都会弹出「另存为」对话框选择位置，程序不设固定保存地址。")
+    tip_save = QLabel("工具栏「保存」直接存到默认目录（气泡回执路径）；「另存为」弹对话框自选位置；"
+                      "「每次截图自动保存一份」默认关闭。")
     tip_save.setStyleSheet("color: #888;")
     tip_save.setWordWrap(True)
     form.addRow("", tip_save)
@@ -360,23 +364,56 @@ def build_control(dialog: PreferencesDialog) -> QWidget:
 
 
 def build_about() -> QWidget:
-    """关于页：版本与技术栈说明。"""
+    """关于页：图标 + 标语 + 功能速览 + 配置/日志位置。"""
     page = QWidget()
     lay = QVBoxLayout(page)
+    lay.setContentsMargins(28, 22, 28, 16)
+    lay.setSpacing(10)
+
+    head = QHBoxLayout()
+    icon = QLabel()
+    icon.setPixmap(app_icon.app_icon().pixmap(56, 56))
+    head.addWidget(icon)
+    head.addSpacing(14)
+    name_col = QVBoxLayout()
+    name_col.setSpacing(2)
     title = QLabel("ZPin")
     f = title.font()
-    f.setPointSize(16)
+    f.setPointSize(17)
     f.setBold(True)
     title.setFont(f)
-    lay.addWidget(title)
-    lay.addWidget(QLabel(f"版本 {defaults.VERSION}"))
-    body = QLabel(
-        "截图标注 + 贴图 + 全局快捷键 + 托盘常驻。\n"
-        "技术栈：Python + PySide6 + Win32（ctypes）。\n\n"
-        "使用：按全局快捷键或托盘菜单发起截图，选区后可标注、\n"
-        "复制、贴图、保存；贴图支持缩放/透明度/分组。"
+    name_col.addWidget(title)
+    ver = QLabel(f"版本 {defaults.VERSION}")
+    ver.setStyleSheet("color: #888;")
+    name_col.addWidget(ver)
+    head.addLayout(name_col)
+    head.addStretch(1)
+    lay.addLayout(head)
+
+    tagline = QLabel("截图 · 标注 · 贴图，一气呵成的 Windows 桌面工具")
+    tagline.setStyleSheet("color: #555;")
+    lay.addWidget(tagline)
+
+    line = QFrame()
+    line.setFrameShape(QFrame.HLine)
+    line.setStyleSheet("color: rgba(0,0,0,30);")
+    lay.addWidget(line)
+
+    bullets = QLabel(
+        "· 全屏 / 框选截图：控件级吸附、对齐参考线、放大镜与取色\n"
+        "· 丰富标注：画笔、文字、序号、气泡、马赛克，画完可二次编辑\n"
+        "· 一键贴图：置顶、缩放、分组，双击隐藏；截图历史随时找回\n"
+        "· 全局快捷键 + 托盘常驻；绿色单文件，无需安装"
     )
-    body.setWordWrap(True)
-    lay.addWidget(body)
+    bullets.setWordWrap(True)
+    lay.addWidget(bullets)
     lay.addStretch(1)
+
+    dim = QLabel(
+        "技术栈：Python · PySide6 · Win32（ctypes）\n"
+        f"配置与日志：{config.app_dir()}"
+    )
+    dim.setStyleSheet("color: #999;")
+    dim.setWordWrap(True)
+    lay.addWidget(dim)
     return page

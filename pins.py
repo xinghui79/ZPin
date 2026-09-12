@@ -248,15 +248,6 @@ class PinManager(QObject):
         self._hidden = not any(w.isVisible() for w in self.all_windows())
 
 
-    def close_all(self) -> None:
-        """销毁全部贴图窗口并清空各组窗口列表。"""
-        for w in self.all_windows():
-            w.close()
-            w.deleteLater()
-        for g in self.groups:
-            g.windows.clear()
-
-
 def clip_pivot() -> QPointF:
     """计算贴图落点。
 

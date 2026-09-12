@@ -303,11 +303,11 @@ class PinWindow(QWidget):
         QApplication.clipboard().setImage(self._source)
 
     def _save_as(self) -> None:
-        """「另存为」：弹路径对话框后写入所选位置（统一走 output.save_image_dialog）。"""
-        path = output.save_image_dialog(self._source, self)
-        if path:
-            self._manager.notify.emit("贴图", f"已保存：{path}")
-        # 取消时不打扰
+        """「另存为」：弹路径对话框后写入所选位置（写盘在后台线程）。"""
+        def _done(path: str | None) -> None:
+            if path:
+                self._manager.notify.emit("贴图", f"已保存：{path}")
+        output.save_image_dialog_async(self._source, self, on_done=_done)
 
     # ---- 交互 ----
     def mousePressEvent(self, ev: QMouseEvent) -> None:
@@ -320,6 +320,7 @@ class PinWindow(QWidget):
     def mouseDoubleClickEvent(self, ev: QMouseEvent) -> None:
         """双击贴图 = 隐藏（托盘「显示全部」或隐藏/显示热键可找回）。"""
         self.hide()
+        self._manager.notify_visibility()
 
     def mouseMoveEvent(self, ev: QMouseEvent) -> None:
         if self._drag_offset is not None:

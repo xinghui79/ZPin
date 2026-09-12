@@ -17,11 +17,12 @@ os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "1")
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Signal
 from PySide6.QtGui import QFont, QImage
-from PySide6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QInputDialog
 
 import app_icon
 import config
 import defaults
+from help_dialog import HelpDialog
 import hotkey
 import history
 import memtrim
@@ -109,6 +110,7 @@ class App:
         self.manager: hotkey.HotkeyManager | None = None
         self.callbacks: dict[str, object] = {}
         self._prefs_dialog: list = []
+        self._help_dialog: list = []
 
     # ---- 截图入口 ----
 
@@ -149,7 +151,7 @@ class App:
 
         Args:
             img: 抓取的物理像素画布。
-            action: "copy" / "save" / "pin"。
+            action: "copy" / "save" / "save_as" / "pin"。
             top_left: 贴图落点（全局逻辑坐标）。
             dpr: 本次截图所用屏幕的缩放比（贴图 1:1 复原用）。
         """
@@ -158,7 +160,11 @@ class App:
         if config.get("Output/auto_save"):
             output.save_image_async(img, directory=output.auto_save_dir())
         if action == "save":
-            # 手动保存一律弹「另存为」，不静默存默认地址；写盘挪后台线程防卡顿
+            # 快速保存：直接写入默认目录（文件名模板 + 自动去重），气泡带回执
+            output.save_image_async(img, on_done=self._notify_saved)
+            return
+        if action == "save_as":
+            # 另存为：弹对话框自行选位置；写盘挪后台线程防卡顿
             output.save_image_dialog_async(img, on_done=self._notify_saved)
             return
         if action == "pin":
@@ -198,8 +204,6 @@ class App:
             (g.name, len(g.windows), i == self.pin_mgr.groups.index(self.pin_mgr.current))
             for i, g in enumerate(self.pin_mgr.groups)
         ])
-        total = len(self.pin_mgr.all_windows())
-        self.tray.set_status(f"贴图 {total} 张 · 组 {len(self.pin_mgr.groups)}")
 
     def _new_group(self) -> None:
         name, ok = QInputDialog.getText(None, "新建贴图组", "组名：")
@@ -257,49 +261,14 @@ class App:
             output.save_image_dialog_async(img, on_done=self._notify_saved)
 
     def _show_help(self) -> None:
-        """弹出帮助（键位实时读配置，改键后同步显示新键）。"""
-
-        def k(act: str) -> str:
-            # 打开帮助时实时读取当前配置键位（改过键后帮助同步显示新键）
-            return config.hotkey_accel(act) or "（未绑定）"
-
-        help_lines = [
-            "ZPin —— 截图 · 标注 · 贴图",
-            "",
-            "■ 快捷键（可到 设置 → 快捷键 修改）",
-            f"全屏截图          {k('capture_full')}   一键截取整个屏幕",
-            f"框选截图          {k('capture')}   自由框选 / 单击吸附窗口或界面元素",
-            f"隐藏/显示全部贴图 {k('toggle_pins')}",
-            f"切换到下一组      {k('switch_group')}",
-            "",
-            "■ 框选截图技巧",
-            "光标自动吸附：优先界面元素（按钮、文字块…），元素过大则回退整个窗口；",
-            "未框选时 Enter / 双击 = 直接截取当前吸附到的元素或窗口（单击只先吸附选中）；",
-            "悬停有放大镜：像素网格 + 坐标色值；拖动边角自动出现，Alt 随时召唤/收起；",
-            "按 C = 复制光标处颜色（#RRGGBB），画面顶部弹提示，悬停/框选后随时可用；",
-            "按住拖拽 = 自由框选，边和角会吸到屏幕与其它窗口的边、中线（有红色参考线）；",
-            "选区外点/拖 = 自动扩选；框内拖动 = 整体移动（已画标注跟着框走）；角/边手柄 = 调整大小；",
-            "选了标注工具后框内变画图：点工具栏「移动」按钮即可恢复框内拖动；",
-            "方向键 = 逐像素微调（Shift 一次 10px）；Ctrl+方向 = 沿该侧扩选；",
-            "Tab（已框选）= 循环手柄后用方向键改大小；",
-            "Space = 自由框选/吸附切换；Tab（未框选）= 轮换检测层级 自动→仅窗口→仅元素；",
-            "Enter 复制 · Ctrl+S 另存为 · Esc 取消；所有截图都会进「截图历史」可再取。",
-            "",
-            "■ 标注",
-            "工具：矩形 / 椭圆 / 直线 / 箭头 / 画笔 / 文本 / 马赛克，"
-            "「⋮」里还有 荧光笔 / 橡皮擦 / 气泡标注；",
-            "不选工具时点已画图形 = 选中：可拖动、拖端点改形状、换颜色或粗细，Del 删除；",
-            "文本与气泡的字号跟随「粗细」档位；一次橡皮涂抹算一步撤销（Ctrl+Z）；",
-            "文字输入框：Enter 换行 · Ctrl+Enter 或点击外部 完成 · Esc 取消。",
-            "",
-            "■ 贴图操作",
-            "左键拖动 = 移动；滚轮 = 以光标为中心缩放；",
-            "右键菜单 = 不透明度/旋转/翻转/灰度/边框/阴影/贴图组等全部操作；",
-            "贴图窗快捷键：Ctrl+C 复制 · Ctrl+S 另存为 · Ctrl+0 实际大小 · Ctrl+R 重置",
-            "（还原缩放/旋转/灰度）· Ctrl+T 旋转 · Esc 隐藏 · Del 销毁 · 双击隐藏。",
-            "托盘「贴图管理 → 贴剪贴板图片」：复制任意图片后直接贴上屏幕。",
-        ]
-        QMessageBox.information(None, "ZPin 帮助", "\n".join(help_lines))
+        """弹出帮助窗口（左侧分类导航，键位实时读配置）；已开则前置。"""
+        if self._help_dialog and self._help_dialog[0].isVisible():
+            self._help_dialog[0].raise_()
+            self._help_dialog[0].activateWindow()
+            return
+        self._help_dialog.clear()
+        self._help_dialog.append(HelpDialog())
+        self._help_dialog[0].show()
 
     # ---- 热键 ----
 

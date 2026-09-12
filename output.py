@@ -1,8 +1,8 @@
-"""保存输出 —— 文件名模板渲染 + 另存为对话框 + 格式记忆（写盘均在后台线程）。
+"""保存输出 —— 文件名模板渲染 + 快速保存 / 另存为 + 格式记忆（写盘均在后台线程）。
 
 模板令牌：$yyyy-MM-dd_HH-mm-ss$ 等，渲染为当前时间。
-软件内所有手动保存都走 save_image_dialog_async（弹「另存为」让用户选位置），
-不设静默的"默认保存地址"；Output/default_dir 仅作对话框的初始目录。
+快速保存（save_image_async）不弹框直接写入指定目录——工具栏「保存」用它存到
+默认目录；「另存为」（save_image_dialog_async）弹对话框让用户选位置。
 整屏 PNG 编码约 200ms，放主线程会在保存瞬间卡顿，因此统一走后台线程。
 """
 from __future__ import annotations
@@ -24,6 +24,10 @@ log = logging.getLogger("zpin.output")
 _GROUP = re.compile(r"\$([A-Za-z\-_]*)\$")
 _FIELD = re.compile(r"yyyy|MM|dd|HH|mm|ss")
 _KNOWN_EXT = ("png", "jpg", "jpeg", "bmp")
+
+# 自动保存的「查重 + 写盘」串行锁：查重在写盘前完成才有意义，两次快速截图
+# 各自起线程时，不在锁内先查后写会选到同一个路径互相覆盖
+_NAME_LOCK = threading.Lock()
 
 
 def render_name(template: str, now: datetime | None = None) -> str:
@@ -138,29 +142,40 @@ def save_image_async(img: QImage, ext: str | None = None, directory: str | None 
     stem = os.path.splitext(name)[0]
     name_ext = "." + _effective_ext(name, ext)
     directory = directory or default_dir()
-    try:
-        os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, stem + name_ext)
-        i = 1
-        while os.path.exists(path):
-            path = os.path.join(directory, f"{stem}_{i}{name_ext}")
-            i += 1
-    except OSError:
-        log.exception("保存异常：%s", directory)
-        if on_done:
-            on_done("")
-        return
     if config.get("Output/remember_ext"):
         config.set("Output/last_ext", name_ext.lstrip("."))
         config.sync()
-    _write_async(img, path, name_ext.lstrip("."), on_done)
+
+    def _work() -> None:
+        path = ""
+        try:
+            with _NAME_LOCK:
+                os.makedirs(directory, exist_ok=True)
+                path = os.path.join(directory, stem + name_ext)
+                i = 1
+                while os.path.exists(path):
+                    path = os.path.join(directory, f"{stem}_{i}{name_ext}")
+                    i += 1
+                if name_ext.lstrip(".") in ("jpg", "jpeg"):
+                    ok = img.save(path, quality=int(config.get("Output/quality")))
+                else:
+                    ok = img.save(path)
+        except Exception:
+            log.exception("保存异常：%s", directory)
+            ok = False
+        if not ok:
+            log.error("保存失败：%s", path or directory)
+        if on_done:
+            on_done(path if ok else "")
+
+    threading.Thread(target=_work, name="ZPinSave", daemon=True).start()
 
 
 def save_image_dialog_async(img: QImage, parent: QWidget | None = None,
                             on_done: Callable[[str | None], None] | None = None) -> None:
     """弹出「另存为」确定路径后，在工作线程编码写盘。
 
-    软件内所有手动保存入口都用它，不静默存到默认地址。
+    软件内所有「另存为」入口都用它；快速保存（不弹框）走 save_image_async。
 
     Args:
         img: 待保存的图像。

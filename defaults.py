@@ -71,7 +71,7 @@ DEFAULTS: dict[str, object] = {
     "Groups/names": "贴图",
 }
 
-VERSION = "1.1.0"     # 软件版本号（关于页/README 的唯一事实来源）
+VERSION = "1.2.0"     # 软件版本号（关于页/README 的唯一事实来源）
 CONFIG_VERSION = 5
 
 # DEFAULTS 里少数键不是「设置」而是内部状态或用户数据，按页恢复默认时必须跳过：

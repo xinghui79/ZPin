@@ -1,9 +1,9 @@
 """截图标注工具条 —— 常用布局：撤销/重做 → 常用工具 → 颜色/粗细 → 完成动作 + ⋮ 更多。
 
-一级只放高频工具（矩形/椭圆/直线/箭头/画笔/文本/马赛克），荧光笔/橡皮擦/气泡
-标注收进 ⋮ 二级菜单，功能不丢、首屏不臃肿。图标全部用 SVG(Feather 风格线性) 渲染，
-与预览图一致；浮动的 Qt.Tool 窗口，WA_ShowWithoutActivating 保持覆盖层持有键盘焦点，
-自身也兜底转发 Esc/Enter/Ctrl+Z/Y/S。
+一级只放高频工具（移动/矩形/椭圆/直线/箭头/画笔/文本/马赛克），荧光笔/橡皮擦/
+气泡标注/序号标记收进 ⋮ 二级菜单，功能不丢、首屏不臃肿。图标全部用 SVG
+（SF Symbols 风格）渲染；浮动的 Qt.Tool 窗口，WA_ShowWithoutActivating 保持
+覆盖层持有键盘焦点，自身也兜底转发 Esc/Enter/Ctrl+Z/Y/S。
 """
 from __future__ import annotations
 
@@ -43,14 +43,15 @@ TOOLS = [
     ("line", "直线"),
     ("arrow", "箭头"),
     ("pen", "画笔"),
-    ("text", "文本"),
-    ("mosaic", "马赛克"),
+    ("text", "文本（点选位置后输入）"),
+    ("mosaic", "马赛克（涂抹区域）"),
 ]
 # ⋮ 更多菜单：低频但仍保留
 MORE_TOOLS = [
-    ("marker", "荧光笔"),
-    ("eraser", "橡皮擦"),
-    ("callout", "气泡标注"),
+    ("marker", "荧光笔（半透明粗笔迹）"),
+    ("eraser", "橡皮擦（擦除整个图形，悬停有红框预览）"),
+    ("callout", "气泡标注（拖出气泡后输入文字）"),
+    ("step", "序号标记（自动递增编号）"),
 ]
 
 PALETTE = [
@@ -72,84 +73,127 @@ QMenu::item { padding: 6px 22px 6px 8px; border-radius: 5px; }
 QMenu::item:selected { background: rgba(255,255,255,30); }
 """
 
-# ---- SVG 图标（24 视口 Feather 线性风格；颜色统一由调用方注入）----
+# ---- SVG 图标（24 视口，SF Symbols 风格：统一 ~2px 圆头线宽、圆角连接、
+#      光学居中，填充面用于小尺寸高识别的图标；颜色统一由调用方注入）----
 # 每个图标一行 SVG 主体；未列出的名字兜底为空心圆。
 def _svg_color(c: str, param: object) -> str:
+    """色井（color well）：实心色点 + 半透明外环，Apple 取色控件同款。"""
     hex_c = param or c
-    return (f'<circle cx="12" cy="12" r="8.4" fill="{hex_c}" '
-            f'stroke="{c}" stroke-width="1.4" stroke-opacity="0.55"/>')
+    return (f'<circle cx="12" cy="12" r="5.5" fill="{hex_c}" stroke="none"/>'
+            f'<circle cx="12" cy="12" r="8.4" fill="none" stroke="{c}" '
+            f'stroke-opacity="0.5"/>')
 
 
 def _svg_width(c: str, param: object) -> str:
+    """一条横线，线宽实时跟随当前粗细档（所见即所选）。"""
     d = float(param or 4.0)
-    r = min(7.6, max(2.8, d * 1.1))
-    return f'<circle cx="12" cy="12" r="{r:.1f}" fill="{c}"/>'
+    w = min(6.4, max(1.4, d * 0.8))
+    return f'<line x1="5" y1="12" x2="19" y2="12" stroke-width="{w:.1f}"/>'
 
 
 _SVG_BODIES: dict[str, Callable[[str, object], str]] = {
-    "rect": lambda c, p: '<rect x="4" y="5" width="16" height="14" rx="2"/>',
-    "ellipse": lambda c, p: '<ellipse cx="12" cy="12.5" rx="9" ry="6.6"/>',
-    "line": lambda c, p: f'<line x1="4.5" y1="19.5" x2="19.5" y2="4.5" stroke="{c}"/>',
+    "rect": lambda c, p: '<rect x="4.5" y="6" width="15" height="12" rx="2.6"/>',
+    "ellipse": lambda c, p: '<ellipse cx="12" cy="12" rx="7.6" ry="5.7"/>',
+    "line": lambda c, p: '<line x1="5.8" y1="18.2" x2="18.2" y2="5.8"/>',
+    # SF arrow.up.right：斜线 + 直角折线箭头
     "arrow": lambda c, p: (
-        f'<line x1="4" y1="20" x2="16.4" y2="7.6" stroke="{c}"/>'
-        f'<path d="M20.2 3.8l-1.8 6.6-4.8-4.6z" fill="{c}"/>'
+        '<line x1="6" y1="18" x2="17.4" y2="6.6"/>'
+        '<polyline points="9 5.5 18.5 5.5 18.5 15"/>'
     ),
-    "pen": lambda c, p: '<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>',
-    "marker": lambda c, p: (f'<line x1="5.5" y1="18.5" x2="18.5" y2="5.5" stroke="{c}" '
-                            f'stroke-width="5.2" stroke-linecap="round"/>'),
-    "text": lambda c, p: (f'<path d="M6 5.5h12" stroke="{c}"/>'
-                          f'<line x1="12" y1="5.5" x2="12" y2="18.5" stroke="{c}"/>'),
+    # 铅笔：斜杆 + 笔杆箍线
+    "pen": lambda c, p: (
+        '<path d="M4.7 19.3l1.1-4L16.9 4.2a2.05 2.05 0 0 1 2.9 2.9L8.7 18.2l-4 1.1z"/>'
+        '<line x1="14.7" y1="6.4" x2="17.6" y2="9.3"/>'
+    ),
+    # 荧光笔：斜杆更粗 + 靠近笔头的斜切箍线（笔头更钝），与铅笔拉开差距
+    "marker": lambda c, p: (
+        '<path d="M5.3 18.7l1.2-3.7 9.3-9.3a2.05 2.05 0 0 1 2.9 2.9l-9.3 9.3-4.1.8z" '
+        'stroke-width="2.4"/>'
+        '<line x1="6.5" y1="15" x2="9.4" y2="17.9"/>'
+    ),
+    # SF textformat：字模 "A"
+    "text": lambda c, p: (
+        '<path d="M6.2 18.7L12 5.3l5.8 13.4"/>'
+        '<line x1="8.4" y1="13.6" x2="15.6" y2="13.6"/>'
+    ),
+    # SF square.grid.2x2.fill：四块填充圆角方块，20px 下即读作"像素化"
     "mosaic": lambda c, p: (
-        '<rect x="3.6" y="3.6" width="7.4" height="7.4" rx="1"/>'
-        '<rect x="13" y="3.6" width="7.4" height="7.4" rx="1"/>'
-        '<rect x="3.6" y="13" width="7.4" height="7.4" rx="1"/>'
-        '<rect x="13" y="13" width="7.4" height="7.4" rx="1"/>'
-    ),
-    "move": lambda c, p: (
-        '<polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/>'
-        '<polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/>'
-        '<line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/>'
-    ),
-    "eraser": lambda c, p: (
-        '<g transform="rotate(-38 12 17)">'
-        '<rect x="6" y="13.5" width="12" height="7" rx="2"/>'
-        f'<path d="M6 17h12" stroke="{c}"/>'
+        f'<g fill="{c}" stroke="none">'
+        '<rect x="4.4" y="4.4" width="6.6" height="6.6" rx="1.6"/>'
+        '<rect x="13" y="4.4" width="6.6" height="6.6" rx="1.6"/>'
+        '<rect x="4.4" y="13" width="6.6" height="6.6" rx="1.6"/>'
+        '<rect x="13" y="13" width="6.6" height="6.6" rx="1.6"/>'
         '</g>'
     ),
-    "callout": lambda c, p: (
-        '<rect x="3" y="4.5" width="18" height="12.5" rx="3"/>'
-        '<path d="M9.5 17l-3 4.5 6.5-4.5z"/>'
+    # SF arrow.up.and.down.and.left.and.right：十字 + 四向 V 形箭头
+    "move": lambda c, p: (
+        '<line x1="12" y1="4.6" x2="12" y2="19.4"/>'
+        '<line x1="4.6" y1="12" x2="19.4" y2="12"/>'
+        '<polyline points="9.6 7 12 4.6 14.4 7"/>'
+        '<polyline points="9.6 17 12 19.4 14.4 17"/>'
+        '<polyline points="7 9.6 4.6 12 7 14.4"/>'
+        '<polyline points="17 9.6 19.4 12 17 14.4"/>'
     ),
+    # 橡皮：圆角斜块 + 分隔线（下半为"用过的"擦除面）
+    "eraser": lambda c, p: (
+        '<g transform="rotate(-40 12 12.5)">'
+        '<rect x="4.6" y="9" width="14.8" height="7" rx="2.2"/>'
+        '<line x1="10.9" y1="9" x2="10.9" y2="16"/>'
+        '</g>'
+    ),
+    # SF bubble.left：圆角气泡 + 左下尾
+    "callout": lambda c, p: (
+        '<path d="M21 14.6a2.2 2.2 0 0 1-2.2 2.2H7.4l-4 3.8V5.6a2.2 2.2 0 0 1 '
+        '2.2-2.2h13.2A2.2 2.2 0 0 1 21 5.6v9z"/>'
+    ),
+    # SF arrow.uturn.left / .right：回转箭头
     "undo": lambda c, p: (
-        '<polyline points="1 4 1 10 7 10"/>'
-        '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>'
+        '<polyline points="2.6 4.6 2.6 10 8.1 10"/>'
+        '<path d="M4 14.7a8.6 8.6 0 1 0 2-8.9L2.6 10"/>'
     ),
     "redo": lambda c, p: (
-        '<polyline points="23 4 23 10 17 10"/>'
-        '<path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/>'
+        '<polyline points="21.4 4.6 21.4 10 15.9 10"/>'
+        '<path d="M20 14.7a8.6 8.6 0 1 1-2-8.9l3.4 4.2"/>'
     ),
     "color": _svg_color,
     "width": _svg_width,
+    # SF doc.on.doc：两张叠放的圆角卡片
     "copy": lambda c, p: (
-        '<rect x="9" y="9" width="13" height="13" rx="2"/>'
-        '<path d="M5 15V5a2 2 0 0 1 2-2h10"/>'
+        '<rect x="8.8" y="8.8" width="12.2" height="12.2" rx="2.4"/>'
+        '<path d="M5.2 15.2h-.7a2.3 2.3 0 0 1-2.3-2.3V5.5a2.3 2.3 0 0 1 '
+        '2.3-2.3h7.4a2.3 2.3 0 0 1 2.3 2.3v.7"/>'
     ),
+    # 图钉：钉头 + 针脚
     "pin": lambda c, p: (
-        f'<circle cx="12" cy="6.6" r="4.4" stroke="{c}"/>'
-        f'<line x1="12" y1="11" x2="12" y2="16.4" stroke="{c}"/>'
-        f'<line x1="7.8" y1="19" x2="16.2" y2="19" stroke="{c}"/>'
+        '<path d="M15.4 4H8.6l.8 5.6-2.9 3.4a1 1 0 0 0 .8 1.6h9.4a1 1 0 0 0 '
+        '.8-1.6l-2.9-3.4.8-5.6z"/>'
+        '<line x1="12" y1="14.6" x2="12" y2="19.8"/>'
     ),
+    # 快速保存：SF square.and.arrow.down —— 托盘 + 下箭头（存到默认目录）
     "save": lambda c, p: (
+        '<line x1="12" y1="3.2" x2="12" y2="13.2"/>'
+        '<polyline points="8.2 9.8 12 13.6 15.8 9.8"/>'
+        '<path d="M7.6 7.8h-.7a2.4 2.4 0 0 0-2.4 2.4v7a2.4 2.4 0 0 0 '
+        '2.4 2.4h10.2a2.4 2.4 0 0 0 2.4-2.4v-7a2.4 2.4 0 0 0-2.4-2.4h-.7"/>'
+    ),
+    # 另存为：软盘（选择位置的经典记号，与快速保存的托盘明确区分）
+    "saveas": lambda c, p: (
         '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11'
         'a2 2 0 0 1-2 2z"/>'
         '<polyline points="17 21 17 13 7 13 7 21"/>'
         '<polyline points="7 3 7 8 15 8"/>'
     ),
-    "cancel": lambda c, p: ('<line x1="18" y1="6" x2="6" y2="18"/>'
-                            '<line x1="6" y1="6" x2="18" y2="18"/>'),
-    "more": lambda c, p: (f'<circle cx="5.2" cy="12" r="1.7" fill="{c}"/>'
-                          f'<circle cx="12" cy="12" r="1.7" fill="{c}"/>'
-                          f'<circle cx="18.8" cy="12" r="1.7" fill="{c}"/>'),
+    "cancel": lambda c, p: ('<line x1="6.2" y1="6.2" x2="17.8" y2="17.8"/>'
+                            '<line x1="17.8" y1="6.2" x2="6.2" y2="17.8"/>'),
+    # 序号标记：SF "1.circle" 风格 —— 圆圈里的 1
+    "step": lambda c, p: (
+        '<circle cx="12" cy="12" r="8.4"/>'
+        '<path d="M10.3 9.3l2.1-1.3v8.4"/>'
+    ),
+    "more": lambda c, p: (f'<g fill="{c}" stroke="none">'
+                          f'<circle cx="5" cy="12" r="1.9"/>'
+                          f'<circle cx="12" cy="12" r="1.9"/>'
+                          f'<circle cx="19" cy="12" r="1.9"/></g>'),
 }
 
 
@@ -275,11 +319,14 @@ class CaptureToolbar(QWidget):
         self._add_color_width_btn(row_lay, self._btn_width)
         self._add_sep(row_lay)
 
-        # 4. 完成动作：取消(Esc) 在左，复制 ✓(Enter) / 贴图 / 保存 在右
+        # 4. 完成动作：取消(Esc) 在左，复制 ✓(Enter) / 贴图 / 保存 / 另存为 在右
         self._add_btn(row_lay, "cancel", "取消 (Esc)", lambda: self.action.emit("cancel"))
         self._add_btn(row_lay, "copy", "复制 (Enter)", lambda: self.action.emit("copy"))
         self._add_btn(row_lay, "pin", "贴图", lambda: self.action.emit("pin"))
-        self._add_btn(row_lay, "save", "保存 (Ctrl+S)", lambda: self.action.emit("save"))
+        self._add_btn(row_lay, "save", "快速保存 (Ctrl+S，存到默认目录)",
+                      lambda: self.action.emit("save"))
+        self._add_btn(row_lay, "saveas", "另存为（选择位置）",
+                      lambda: self.action.emit("save_as"))
         self._add_sep(row_lay)
 
         # 5. ⋮ 更多菜单（荧光笔 / 橡皮擦 / 气泡标注）
@@ -360,12 +407,22 @@ class CaptureToolbar(QWidget):
         self._tool = None if name in ("", "none") else name
         self.tool_selected.emit(name)
 
+    def _below_pos(self, btn: QToolButton, menu_w: int) -> QPoint:
+        """按钮正下方的弹出坐标；越出屏幕右缘时向内收。"""
+        tl = btn.mapToGlobal(QPoint(0, btn.height() + 2))
+        scr = btn.screen()
+        if scr is not None:
+            g = scr.availableGeometry()
+            tl.setX(min(max(g.left() + 4, tl.x()), g.right() - menu_w - 3))
+        return tl
+
     def _more_menu(self) -> None:
         """⋮ 菜单：popup 非阻塞弹出，再点一次 ⋮ 即收起（切换而非重开）。"""
         if self._more.isVisible():
             self._more.close()
             return
-        self._more.popup(self.mapToGlobal(self.rect().bottomRight()))
+        self._more.popup(self._below_pos(self._btn_more,
+                                         self._more.sizeHint().width()))
 
     def _build_more_menu(self) -> None:
         """构建 ⋮ 二级工具菜单（持久实例，随工具栏销毁）。"""
@@ -411,7 +468,7 @@ class CaptureToolbar(QWidget):
         custom.setFont(self.font())
         custom.triggered.connect(
             lambda: self._pick_color(QColorDialog.getColor(self._color, self, "自定义颜色"), menu))
-        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
+        menu.exec(self._below_pos(self._btn_color, menu.sizeHint().width()))
         menu.deleteLater()
 
     def _pick_color(self, color: QColor, menu: QMenu) -> None:
@@ -428,7 +485,7 @@ class CaptureToolbar(QWidget):
         for label, w in WIDTHS:
             act = menu.addAction(_glyph("width", param=w), f"{label}（{w:.0f}px）")
             act.triggered.connect(lambda _=False, ww=w: self._pick_width(ww))
-        menu.exec(self.mapToGlobal(self.rect().bottomLeft()))
+        menu.exec(self._below_pos(self._btn_width, menu.sizeHint().width()))
         menu.deleteLater()
 
     def _pick_width(self, w: float) -> None:

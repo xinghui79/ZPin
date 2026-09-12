@@ -10,7 +10,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
-    QLabel,
     QMenu,
     QSystemTrayIcon,
 )
@@ -88,10 +87,6 @@ class TrayController(QSystemTrayIcon):
         self.menu = QMenu()
         self.menu.setAttribute(Qt.WA_TranslucentBackground)
         self.menu.setStyleSheet(MENU_STYLE)
-
-        # 兼容旧调用：状态行不再显示（菜单从「截图」直接开始）
-        self.status_label = QLabel("")
-        self.status_label.hide()
 
         self._accels = accels
         self._pins_hidden = False
@@ -181,9 +176,6 @@ class TrayController(QSystemTrayIcon):
         self.menu.addAction(act_quit)
 
     # ---- 状态与气泡 ----
-    def set_status(self, text: str) -> None:
-        self.status_label.setText(text)
-
     def notify(self, title: str, text: str) -> None:
         self.showMessage(title, text, QSystemTrayIcon.Information, 5000)
 
@@ -218,10 +210,10 @@ class TrayController(QSystemTrayIcon):
         self._rebuild_pin_menu(groups)
 
     def _rebuild_pin_menu(self, groups: list[tuple[str, int, bool]]) -> None:
-        # 保留构造期固定的「下一组 + 分隔」（前两个 action），其后全部重建
+        # 保留构造期固定的「下一组 + 贴剪贴板图片」（前两个 action），其后全部重建
         while self.pin_menu.actions() and len(self.pin_menu.actions()) > 2:
             self.pin_menu.removeAction(self.pin_menu.actions()[-1])
-        if len(self.pin_menu.actions()) < 2:
+        if self.pin_menu.actions():
             self.pin_menu.addSeparator()
         if not groups:
             empty = QAction("（暂无贴图）", self.pin_menu)

@@ -510,6 +510,59 @@ class TextShape(Shape):
         return QRectF(self.pos.x() - 4, self.pos.y() - 4, w + 8, h + 8)
 
 
+class StepBadge(Shape):
+    """序号标记：实心圆 + 白色粗体数字，序号自动递增。
+
+    Args:
+        color: 圆底颜色（数字恒为白色，任何底色都可读）。
+        font_size: 基准字号（像素，随「粗细」档位）。
+        number: 显示的序号（1 起）。
+    """
+
+    def __init__(self, color: QColor, font_size: float, number: int) -> None:
+        super().__init__(color, 1)
+        self.pos = QPointF()
+        self.font_size = font_size
+        self.number = int(number)
+
+    def _font(self) -> QFont:
+        f = QFont("Microsoft YaHei UI")
+        f.setPixelSize(max(9, int(self.font_size * 0.72)))
+        f.setWeight(QFont.Bold)
+        return f
+
+    def _radius(self) -> float:
+        """圆半径：单字号基准，多位数字时按文字宽度撑大。"""
+        fm = QFontMetrics(self._font())
+        return max(self.font_size * 0.72,
+                   fm.horizontalAdvance(str(self.number)) / 2 + self.font_size * 0.3)
+
+    def draw(self, p: QPainter) -> None:
+        """绘制彩色圆盘 + 白描边 + 居中白色数字。"""
+        r = self._radius()
+        p.setPen(QPen(QColor(255, 255, 255, 225), max(1.5, r * 0.14)))
+        p.setBrush(self.color)
+        p.drawEllipse(self.pos, r, r)
+        p.setFont(self._font())
+        p.setPen(QPen(QColor("#FFFFFF")))
+        p.drawText(QRectF(self.pos.x() - r, self.pos.y() - r, r * 2, r * 2),
+                   Qt.AlignCenter, str(self.number))
+
+    def hit(self, pt: QPointF, tol: float = 6.0) -> bool:
+        """命中检测：整个圆盘（含容差外扩）。"""
+        r = self._radius() + tol
+        return abs(pt.x() - self.pos.x()) <= r and abs(pt.y() - self.pos.y()) <= r
+
+    def translate(self, dx: float, dy: float) -> None:
+        """整体平移。"""
+        self.pos += QPointF(dx, dy)
+
+    def bounding_rect(self) -> QRectF:
+        """圆盘包围盒（外扩描边宽度）。"""
+        r = self._radius() + 3
+        return QRectF(self.pos.x() - r, self.pos.y() - r, r * 2, r * 2)
+
+
 class Callout(TextShape):
     """标注：气泡框 + 指向尾巴 + 文字。
 

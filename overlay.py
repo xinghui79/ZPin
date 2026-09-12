@@ -1,6 +1,7 @@
 """区域选择覆盖层 —— 每屏一个置顶覆盖窗 + SelectionController 跨屏状态机。
 
-状态流：hover（整屏遮罩 + 吸附检测：UIA 界面元素优先、回退整窗 + 放大镜/取色）
+状态流：hover（遮罩 + 吸附检测：UIA 界面元素优先、回退整窗，吸附建议框挖空
+透出真实画面 + 放大镜/取色）
 → creating（拖拽出新选区）→ selected（8 手柄/方向键微调/Ctrl+方向扩选/Enter 确认/
 Esc 取消）→ moving（标注跟随平移）/resizing（放大镜自动出现）。
 吸附键位：Space 切自由框选、Tab 轮换检测层级（auto/win/el）；
@@ -134,6 +135,7 @@ class _Magnifier(QWidget):
         self._controller = controller
         self._info = ""
         self._src = QRect()
+        self._src_off = QPoint()
         self.resize(_MAG_VIEW + 2, _MAG_VIEW + _MAG_INFO_H + 2)
 
     def update_at(self, cursor: QPointF) -> None:
@@ -142,11 +144,17 @@ class _Magnifier(QWidget):
         base = host._base
         if base.isNull():
             return
-        ap = host._map.abs_of(cursor)
-        px, py = int(ap.x()), int(ap.y())
+        # 底图是画布坐标（绝对物理 - 画布原点），必须用 phys_of；abs_of 在
+        # 虚拟桌面原点非 (0,0)（存在位于主屏左/上方的显示器）时会整体错位
+        cp = host._map.phys_of(cursor)
+        px, py = int(cp.x()), int(cp.y())
         half = _MAG_SRC // 2
-        self._src = QRect(px - half, py - half, _MAG_SRC, _MAG_SRC).intersected(
-            base.rect())
+        src_full = QRect(px - half, py - half, _MAG_SRC, _MAG_SRC)
+        self._src = src_full.intersected(base.rect())
+        # 取样区贴边被裁小时记录偏移：绘制时按偏移原位摆放，中心红框
+        # 始终对准光标像素（否则裁小后会被拉伸铺满视口，中心错位）
+        self._src_off = QPoint(self._src.left() - src_full.left(),
+                               self._src.top() - src_full.top())
         cx = min(max(px, 0), base.width() - 1)
         cy = min(max(py, 0), base.height() - 1)
         self._info = (f"x:{px} y:{py}  "
@@ -174,9 +182,13 @@ class _Magnifier(QWidget):
         if self._src.isEmpty():
             return
         view = QRectF(1, 1, _MAG_VIEW, _MAG_VIEW)
-        # 不开平滑变换 = Nearest：放大后是干净的马赛克像素块
-        p.drawImage(view, self._controller._base, self._src)
+        # 不开平滑变换 = Nearest：放大后是干净的马赛克像素块；
+        # 取样区贴边被裁小时按 _src_off 原位摆放，不让它拉伸铺满视口
         zoom = _MAG_VIEW / _MAG_SRC
+        dst = QRectF(view.left() + self._src_off.x() * zoom,
+                     view.top() + self._src_off.y() * zoom,
+                     self._src.width() * zoom, self._src.height() * zoom)
+        p.drawImage(dst, self._controller._base, self._src)
         if zoom >= 8:   # 每个源像素 ≥8 显示像素才画网格，小尺寸时是噪声
             p.setPen(QPen(QColor(255, 255, 255, 36), 1))
             for i in range(1, _MAG_SRC):
@@ -473,12 +485,16 @@ class SelectionController(QObject):
             except Exception:
                 log.exception("遮罩窗穿透位切换失败 hwnd=%s", hwnd)
 
-    @staticmethod
-    def _element_useful(rect: QRectF, win: QRectF) -> bool:
+    def _element_useful(self, rect: QRectF, win: QRectF) -> bool:
         if rect.width() < _EL_MIN_PX or rect.height() < _EL_MIN_PX:
             return False
         if not win.isValid():
-            return True
+            # 没有窗口基准时也不能放行离谱大的元素：桌面/任务栏空白处 UIA
+            # 偶尔返回盖满整屏的"链接"类伪元素，吸上它等于全屏框选
+            b = QRectF(self._bounds)
+            return (b.isValid()
+                    and rect.width() * rect.height()
+                    < b.width() * b.height() * _EL_MAX_COVER)
         inter = rect.intersected(win)
         if inter.isEmpty() or inter.width() * inter.height() < rect.width() * rect.height() * 0.6:
             return False   # 元素不在吸附窗口内（多半是别的全屏透明窗）
@@ -848,10 +864,12 @@ class SelectionController(QObject):
             self._update_magnifier()
             return True
         if key == Qt.Key_C and not mod:
-            # 取色：截图模式内随时按 C 复制光标处色值（不依赖放大镜可见）
+            # 取色：截图模式内随时按 C 复制光标处色值（不依赖放大镜可见）。
+            # 底图是画布坐标，用 phys_of（abs_of 在负坐标屏布局下会取错像素）
+            cp = self._map.phys_of(self._cursor)
             c = self._base.pixelColor(
-                min(max(int(self._map.abs_of(self._cursor).x()), 0), self._base.width() - 1),
-                min(max(int(self._map.abs_of(self._cursor).y()), 0), self._base.height() - 1))
+                min(max(int(cp.x()), 0), self._base.width() - 1),
+                min(max(int(cp.y()), 0), self._base.height() - 1))
             hexc = c.name(QColor.HexRgb).upper()
             QApplication.clipboard().setText(hexc)
             self._show_toast(f"已复制 {hexc}")
@@ -978,19 +996,29 @@ class SelectionController(QObject):
     def _paint_hover_layer(self, window: _OverlayWindow, p: QPainter, geo: QRect,
                            local: Callable[[QPointF], QPointF],
                            accent: QColor, border_w: int) -> None:
-        """未框选态：整窗遮罩 + 吸附建议框/角锚点 + 十字线。"""
+        """未框选态：整窗遮罩 + 吸附建议框/角锚点 + 十字线。
+
+        吸附建议框内部不盖遮罩（Snipaste 同款）：建议框挖空，透出底图真实
+        画面，让"吸到的是什么"一目了然。
+        """
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(QColor(config.get("Capture/mask_color"))))
-        p.drawRect(window.rect())
-        # 吸附建议框 + 角锚点（仅在存在有效吸附建议时绘制）
         if self._suggest.isValid():
             sr = QRectF(local(self._suggest.topLeft()), self._suggest.size())
+            window_path = QPainterPath()
+            window_path.addRect(QRectF(window.rect()))
+            sug_path = QPainterPath()
+            sug_path.addRect(sr)
+            p.drawPath(window_path.subtracted(sug_path))
+            # 吸附建议框 + 角锚点
             p.setPen(QPen(accent, border_w))
             p.setBrush(Qt.NoBrush)
             p.drawRect(sr)
             if config.get("Capture/show_anchors"):
                 self._draw_corner_anchors(
                     p, sr, QColor(config.get("Capture/anchor_stroke_color")), accent)
+        else:
+            p.drawRect(window.rect())
         self._draw_crosshair_if_enabled(p, geo, local)
 
     def _paint_mask(self, window: _OverlayWindow, p: QPainter, r: QRectF) -> None:

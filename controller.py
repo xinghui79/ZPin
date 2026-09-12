@@ -8,6 +8,7 @@ CaptureToolbar / TextEditor、当前绘制状态、撤销重做、文字批注�
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QKeyEvent, QPainter, QPen
@@ -22,12 +23,16 @@ from shapes import (
     Mosaic,
     Rect,
     Shape,
+    StepBadge,
     Stroke,
     TextShape,
     endpoints,
 )
 from text_edit import TextEditor
 from toolbar import CaptureToolbar
+
+if TYPE_CHECKING:
+    from overlay import SelectionController
 
 log = logging.getLogger("zpin.controller")
 
@@ -131,6 +136,7 @@ class AnnotationController(QObject):
         self._engine.remove(self._edit_shape)
         self.select_shape(None)
         self._sync_toolbar_state()
+        self._position_toolbar()
         self._host._update_all()
         return True
 
@@ -206,7 +212,7 @@ class AnnotationController(QObject):
                 self.select_shape(None)
                 self._sync_toolbar_state()
                 self._host._update_all()
-        elif action in ("copy", "pin", "save", "cancel"):
+        elif action in ("copy", "pin", "save", "save_as", "cancel"):
             if action == "cancel":
                 self._host.cancel()
             else:
@@ -277,6 +283,8 @@ class AnnotationController(QObject):
                 self._sync_toolbar_state()
             self._text_editor = None
             self._host._refocus_overlay()
+            # 置顶必须在 refocus 之后：activateWindow 会把遮罩重新抬到工具栏上面
+            self._position_toolbar()
             self._host._update_all()
 
         def cancel_edit() -> None:
@@ -284,6 +292,7 @@ class AnnotationController(QObject):
             self._text_editor = None
             self._active_shape = None
             self._host._refocus_overlay()
+            self._position_toolbar()
             self._host._update_all()
 
         editor.committed.connect(commit)
@@ -339,6 +348,18 @@ class AnnotationController(QObject):
             s.pos = QPointF(ip)
             self._active_shape = s
             self._host._state = "drawing"
+        elif tool == "step":
+            if self.try_grab_shape(pos):        # 点中已有序号 -> 拖动换位
+                return
+            # 序号 = 已落序号的最大值 + 1：撤销/擦掉中间的序号后，新序号会补位
+            num = 1
+            if self._engine:
+                num += max((getattr(sh, "number", 0) for sh in self._engine.shapes),
+                           default=0)
+            s = StepBadge(self._color, font_px, num)
+            s.pos = QPointF(ip)
+            self._active_shape = s
+            self._host._state = "drawing"
         else:
             cls = {"line": Line, "arrow": Arrow, "rect": Rect, "ellipse": Ellipse}.get(tool)
             if cls is None:
@@ -374,7 +395,7 @@ class AnnotationController(QObject):
         a = self._active_shape
         if isinstance(a, (Stroke, Mosaic)):
             a.add_point(ip)
-        elif isinstance(a, Callout):
+        elif isinstance(a, (Callout, StepBadge)):
             a.pos = ip
         elif isinstance(a, (Line, Rect)):
             a.p2 = ip
@@ -410,7 +431,7 @@ class AnnotationController(QObject):
             self._active_shape = s   # 编辑期间保持气泡可见，提交/取消时清除
             self._open_text_editor(pos, s)
             return
-        if isinstance(s, (Stroke, Mosaic)):
+        if isinstance(s, (Stroke, Mosaic, StepBadge)):
             ok = True
         else:
             r = QRectF(s.p1, s.p2).normalized()
@@ -448,10 +469,14 @@ class AnnotationController(QObject):
             self._active_shape.translate(dx, dy)
 
     def finish_erasing(self) -> None:
-        """抬手：一整段涂抹合成一步撤销。"""
+        """抬手：一整段涂抹合成一步撤销，并把工具栏重新置顶。"""
         if self._engine:
             self._engine.end_erase_stroke()
             self._sync_toolbar_state()
+        # 擦除期间的点击会把遮罩窗顶到工具栏上面，和 finish_drawing 一样
+        # 需要把工具栏 raise 回来，否则"工具栏消失"
+        self._position_toolbar()
+        self._host._update_all()
 
     def _sync_toolbar_state(self) -> None:
         if self._toolbar and self._engine:
@@ -478,12 +503,14 @@ class AnnotationController(QObject):
                 self._engine.undo()
             self.select_shape(None)   # 栈一动，选中的形状可能已被删/被重做掉
             self._sync_toolbar_state()
+            self._position_toolbar()
             self._host._update_all()
             return True
         if key == Qt.Key_Y and mod & Qt.ControlModifier and self._engine:
             self._engine.redo()
             self.select_shape(None)
             self._sync_toolbar_state()
+            self._position_toolbar()
             self._host._update_all()
             return True
         return False
@@ -509,6 +536,17 @@ class AnnotationController(QObject):
         self._engine.draw(p)
         if self._active_shape is not None:
             self._active_shape.draw(p)
+        # 橡皮擦悬停预览：红框标出这一下会被擦掉的对象，让"对象级擦除"
+        # 变得可预期（Snipaste 同款交互）
+        if (self._tool == "eraser" and self._engine is not None
+                and self._host._state in ("selected", "erasing")):
+            target = self.shape_at(self.img_pt(self._host._cursor))
+            if target is not None:
+                box = target.bounding_rect()
+                if not box.isEmpty():
+                    p.setPen(QPen(QColor("#E53935"), 1.6 * dpr, Qt.DashLine))
+                    p.setBrush(QColor(229, 57, 53, 34))
+                    p.drawRect(box)
         s = self._edit_shape
         if s is not None and s in self._engine.shapes:
             accent = QColor(config.get("Interface/theme_color"))

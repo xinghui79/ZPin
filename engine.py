@@ -1,6 +1,7 @@
 """标注引擎 —— 对象栈 + 撤销/重做 + 马赛克像素化底图。
 
-坐标全部为选区底图物理像素。撤销模型：操作栈 [("add", shape) / ("remove", shape)]，
+坐标全部为选区底图物理像素。撤销模型：操作栈 [("add", shape) / ("remove", shape, 原下标)
+/ ("erase", [(shape, 下标)...]) / ("move", shape, dx, dy) / ("resize", shape, 前, 后)]，
 指针回退即撤销；重做栈在新操作时清空。
 """
 from __future__ import annotations
@@ -57,14 +58,15 @@ class AnnotateEngine:
         self._redo.clear()
 
     def remove(self, shape: Shape) -> None:
-        """从栈中移除形状并记一步撤销。
+        """从栈中移除形状并记一步撤销（记录原下标，撤销时恢复 z 序）。
 
         Args:
             shape: 要移除的形状（不在栈中时不做任何事）。
         """
         if shape in self.shapes:
+            idx = self.shapes.index(shape)
             self.shapes.remove(shape)
-            self._undo.append(("remove", shape))
+            self._undo.append(("remove", shape, idx))
             self._redo.clear()
 
     def erase_at(self, pt: QPointF, tol: float = 8.0) -> bool:
@@ -82,7 +84,7 @@ class AnnotateEngine:
                 idx = self.shapes.index(shape)
                 self.shapes.remove(shape)
                 if self._stroke is None:
-                    self._undo.append(("remove", shape))
+                    self._undo.append(("remove", shape, idx))
                     self._redo.clear()
                 else:
                     # 涂抹中：先攒着，抬手时合成一步撤销
@@ -144,9 +146,9 @@ class AnnotateEngine:
                 self.shapes.remove(shape)
             self._redo.append(("add", shape))
         elif kind == "remove":
-            shape = rest[0]
-            self.shapes.append(shape)
-            self._redo.append(("remove", shape))
+            shape, idx = rest
+            self.shapes.insert(min(idx, len(self.shapes)), shape)
+            self._redo.append(("remove", shape, idx))
         elif kind == "erase":
             for shape, idx in reversed(rest[0]):
                 self.shapes.insert(idx, shape)
@@ -170,10 +172,10 @@ class AnnotateEngine:
             self.shapes.append(shape)
             self._undo.append(("add", shape))
         elif kind == "remove":
-            shape = rest[0]
+            shape, idx = rest
             if shape in self.shapes:
                 self.shapes.remove(shape)
-            self._undo.append(("remove", shape))
+            self._undo.append(("remove", shape, idx))
         elif kind == "erase":
             for shape, _idx in rest[0]:
                 if shape in self.shapes:

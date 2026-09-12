@@ -16,6 +16,9 @@ GWL_STYLE = -16
 WS_CHILD = 0x40000000
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_TRANSPARENT = 0x00000020
+# 任务栏在 Win10/11 上带 WS_EX_TOOLWINDOW，但它是合法且常用的吸附目标，
+# 必须放行（否则窗口吸附/参考线永远看不到任务栏，元素查询被限流时整条失效）
+_SHELL_BAR_CLASSES = frozenset({"Shell_TrayWnd", "Shell_SecondaryTrayWnd"})
 DWMWA_CLOAKED = 14
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
 
@@ -117,7 +120,8 @@ def visible_window_rects(exclude: set[int] | None = None) -> list[tuple[int, int
     矩形是「真正看得见」的范围：优先用 DWM 扩展边框，回退 GetWindowRect，
     再裁进虚拟桌面，保证吸附结果不会比窗口大一圈或跑到屏外。
 
-    跳过：不可见/最小化/子窗口/工具窗/透明窗/UWP 隐藏(cloaked)窗，零尺寸窗。
+    跳过：不可见/最小化/子窗口/工具窗/透明窗/UWP 隐藏(cloaked)窗，零尺寸窗；
+    任务栏（Shell_TrayWnd 系）虽是工具窗仍保留，作为吸附与参考线基准。
 
     Args:
         exclude: 需要排除的窗口句柄集合，可为 None。
@@ -140,9 +144,11 @@ def visible_window_rects(exclude: set[int] | None = None) -> list[tuple[int, int
         buf = ctypes.create_unicode_buffer(64)
         if user32.GetClassNameW(hwnd, buf, 64) and buf.value in ("Progman", "WorkerW"):
             return
+        is_shell_bar = buf.value in _SHELL_BAR_CLASSES
         style = user32.GetWindowLongPtrW(hwnd, GWL_STYLE)
         ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        if style & WS_CHILD or ex & (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT):
+        if not is_shell_bar and (style & WS_CHILD
+                                 or ex & (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT)):
             return
         if _is_cloaked(hwnd):
             return
