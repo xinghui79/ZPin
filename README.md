@@ -1,5 +1,10 @@
 # ZPin
 
+![Version](https://img.shields.io/badge/version-1.2.0-1E78D7)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
+![Python](https://img.shields.io/badge/Python-3.12+-3776AB)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **Windows 截图标注 + 贴图工具（Snipaste 式）。** Python + PySide6 + Win32（ctypes），
 单文件绿色版，无需安装。
 
@@ -155,3 +160,8 @@ assets/            app_icon.ico（打包用）
 ```bat
 .venv\Scripts\python -c "import app_icon; app_icon.write_ico('assets/app_icon.ico')"
 ```
+
+## 许可
+
+[MIT](LICENSE) © 2026 xinghui79
+
