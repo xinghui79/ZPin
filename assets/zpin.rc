@@ -1,0 +1,42 @@
+#pragma code_page(65001)
+// ZPin exe 资源：图标 + 版本信息。@ZPIN_VERSION@ / @ZPIN_VERSION_CSV@ /
+// @ZPIN_ICO@ 由 cmake/genrc.cmake 从 CMakeLists 的 project(VERSION ...) 与
+// 图标构建目标展开，别在这里手写版本号或路径。
+// 第一行的 code_page(65001) 必须在任何含中文的行之前：rc.exe 默认按系统码页
+// （GBK）读文件，UTF-8 的中文会被编成乱码——任务管理器里 FileDescription
+// 曾显示成「ZPin 鈥攖?Windows 鎺…」就是这个原因。
+#include <windows.h>
+
+#define STR2(x) #x
+#define STR(x) STR2(x)
+
+IDI_ICON1 ICON "@ZPIN_ICO@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @ZPIN_VERSION_CSV@
+ PRODUCTVERSION @ZPIN_VERSION_CSV@
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "xinghui79"
+            VALUE "FileDescription", "ZPin"
+            VALUE "FileVersion", STR(@ZPIN_VERSION@)
+            VALUE "InternalName", "zpin"
+            VALUE "LegalCopyright", "MIT License (c) 2026 xinghui79"
+            VALUE "OriginalFilename", "zpin.exe"
+            VALUE "ProductName", "ZPin"
+            VALUE "ProductVersion", STR(@ZPIN_VERSION@)
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0804, 1200
+    END
+END

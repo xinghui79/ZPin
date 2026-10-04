@@ -1,0 +1,8 @@
+# cargo 的产物目录：挪出源码树，并进统一的构建根目录。
+#
+# 默认是 <crate>/target/，实测能长到 3.5GB（oar-ocr/ort/image 的 release 产物
+# 加上多套依赖的中间件）。它和 src/ 混在一起会让 rust/ 看起来莫名其妙巨大，
+# 而 src/ 本来就该只有代码 + Cargo.toml/lock + build.rs。
+# ../build/ 是全项目唯一的构建根（CMake 的产物也在那），删掉即全量清理。
+[build]
+target-dir = "../build"

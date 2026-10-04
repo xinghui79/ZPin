@@ -1,0 +1,33 @@
+[package]
+name = "zpin-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "zpin_core"
+crate-type = ["staticlib"]
+
+[dependencies]
+cxx = "1"
+# 文字识别：PP-OCRv6 small（模型文件在 assets/models，随包放到 exe 旁的 models\；
+# 词典是 75KB 完整版，与 tiny 那套 27KB 的精简版不通用，换档位要连词典一起换）
+oar-ocr = "0.9"
+image = { version = "0.25", default-features = false }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
+    "Win32_System_Com",
+    # panic 日志要打出与 C++ logging.cpp 同格式的本地时间戳（GetLocalTime）
+    "Win32_System_SystemInformation",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[build-dependencies]
+cxx-build = "1"

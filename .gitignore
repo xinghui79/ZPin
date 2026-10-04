@@ -1,5 +1,18 @@
-__pycache__/
-*.pyc
-.venv/
+# 构建产物与缓存（全项目只有一个构建根：CMake 的 + cargo 的 + OpenCV 一次性
+# 构建的都在这，见 tools/build_opencv.bat 与 README「构建准备」）
+# 注意：源码树里的 cmake/ 是 CMake 脚本目录（genrc.cmake），必须进版本库。
 build/
 dist/
+# rc.exe 构建失败时可能落在源码目录的临时文件
+assets/RC*
+# 调参/调试残留
+dbg_out.txt
+build_out*.txt
+# MSVC 中间产物。正常构建由 CMake/Ninja 写在 build\CMakeFiles\ 下；这些是有人
+# 在源码目录手工 cl /c 漏出来的（se_test.obj 连对应的 .cpp 都不存在了）。
+# 真要临时单文件试编译，把输出指定到已被忽略的 build\scratch\，别落在源码树里。
+*.obj
+*.pdb
+*.ilk
+# AI 会话的本地记忆目录（本机笔记，不进版本库）
+.workbuddy/

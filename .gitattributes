@@ -1,0 +1,22 @@
+# 统一行尾：换台机器、换 git 配置都不能改变文件字节。
+#
+# 批处理必须 CRLF：cmd.exe 按字节偏移读 .bat，遇到 UTF-8 多字节行时 LF 版更容易
+# 在行中间断句接着执行（build.bat 头部记过一次真实的「半执行还退出 0」事故）。
+# 本机靠 core.autocrlf=true 侥幸是 CRLF，仓库里存的却是 LF——换一台
+# autocrlf=false/input 的机器克隆下来就直接中招，所以在这儿钉死。
+#
+# 其余源码/文档统一 LF；二进制一律不转换（autocrlf 要是插手 .onnx/.ico/.qm
+# 就是无声损坏，OCR 模型会直接读不出权重）。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.exe binary
+*.dll binary
+*.lib binary
+*.zip binary
+*.ico binary
+*.qm binary
+*.onnx binary
+*.pdb binary
+*.exp binary
+*.ilk binary
