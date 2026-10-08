@@ -94,6 +94,12 @@ bool regDeleteValue(const QString& keyPath, const QString& name);
 bool regWriteDword(const QString& keyPath, const QString& name, quint32 value);
 QStringList regSubKeys(const QString& keyPath);
 
+// 清掉 Windows 8.1+ 的「启动应用」禁用标记：StartupApproved\Run 下同名值存在即表示
+// 被禁用，删除即恢复为「由 Run 键决定」（=启用）。键/值不存在时静默返回，不报警
+// （首次启用自启时该键通常还不存在）。仅在用户于软件内显式开启自启时调用，
+// 避免与用户在 Windows「设置 → 启动应用」里的手动关闭互相打架。
+bool regClearStartupApproval(const QString& keyPath, const QString& name);
+
 // ---- 鼠标滚轮 Raw Input（长截图的滚动检测）----
 // 注册 hwnd 为鼠标 Raw Input 的全局接收者（RIDEV_INPUTSINK）：无论焦点在哪个
 // 窗口，滚轮事件都会以 WM_INPUT 投递到它——长截图时用户滚的是目标窗口

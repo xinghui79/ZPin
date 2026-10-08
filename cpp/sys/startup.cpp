@@ -10,6 +10,9 @@ namespace {
 
 const QString kRunKey =
     QStringLiteral("Software/Microsoft/Windows/CurrentVersion/Run");
+const QString kApprovedKey =
+    QStringLiteral("Software/Microsoft/Windows/CurrentVersion/Explorer/"
+                   "StartupApproved/Run");
 const QString kValueName = QStringLiteral("ZPin");
 
 // 注册表里存的启动命令：绿色版 exe 就是自身路径，带引号防目录含空格。
@@ -35,10 +38,16 @@ bool isEnabled() {
 
 void setEnabled(bool on) {
     // Win32 一律走 win32util（AGENTS 规则 5）：失败细节由它落日志。
-    if (on)
+    if (on) {
         win32::regWriteString(kRunKey, kValueName, target());
-    else
+        // Windows 8.1+ 的「启动应用」开关有独立的禁用标记（StartupApproved），
+        // 光写 Run 键不够——该项被标成禁用时，开机仍不会启动。软件内显式开启
+        // 时一并清除该标记，确保真正生效（不碰开机对账，避免与用户在 Windows
+        // 设置里的手动关闭打架）。
+        win32::regClearStartupApproval(kApprovedKey, kValueName);
+    } else {
         win32::regDeleteValue(kRunKey, kValueName);
+    }
 }
 
 }  // namespace zpin::startup

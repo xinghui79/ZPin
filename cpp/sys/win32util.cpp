@@ -234,6 +234,28 @@ bool regDeleteValue(const QString& keyPath, const QString& name) {
     return false;
 }
 
+bool regClearStartupApproval(const QString& keyPath, const QString& name) {
+    HKEY root = nullptr;
+    const LONG openRc = RegOpenKeyExW(HKEY_CURRENT_USER, regPathW(keyPath).c_str(), 0,
+                                     KEY_SET_VALUE, &root);
+    if (openRc == ERROR_FILE_NOT_FOUND || openRc == ERROR_PATH_NOT_FOUND)
+        return true;   // 键不存在：本就没有禁用标记，无需处理（首次开启自启常见）
+    if (openRc != ERROR_SUCCESS) {
+        log::warn("zpin.win32", QStringLiteral("清启动禁用标记：打开 HKCU\\%1 失败 rc=%2")
+                                    .arg(keyPath)
+                                    .arg(openRc));
+        return false;
+    }
+    const LONG rc = RegDeleteValueW(root, reinterpret_cast<const WCHAR*>(name.utf16()));
+    RegCloseKey(root);
+    if (rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND)
+        return true;   // 值本来就没有（未禁用）= 目标状态已达成
+    log::warn("zpin.win32", QStringLiteral("清启动禁用标记：删 HKCU\\%1\\%2 失败 rc=%3")
+                                .arg(keyPath, name)
+                                .arg(rc));
+    return false;
+}
+
 bool trimWorkingSet() {
     return SetProcessWorkingSetSize(GetCurrentProcess(), SIZE_T(-1), SIZE_T(-1)) != 0;
 }
