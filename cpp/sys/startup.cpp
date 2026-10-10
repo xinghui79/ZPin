@@ -1,6 +1,7 @@
 #include "startup.hpp"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QString>
 
 #include "win32util.hpp"
@@ -16,11 +17,15 @@ const QString kApprovedKey =
 const QString kValueName = QStringLiteral("ZPin");
 
 // 注册表里存的启动命令：绿色版 exe 就是自身路径，带引号防目录含空格。
+// 必须写原生反斜杠路径：资源管理器的登录启动处理拉不起正斜杠命令——静默失败，
+// 任务管理器里看一切正常（v1.3.0 的自启「开了却不生效」就是栽在这里）。
 QString target() {
-    return QStringLiteral("\"%1\"").arg(QCoreApplication::applicationFilePath());
+    return QStringLiteral("\"%1\"").arg(
+        QDir::toNativeSeparators(QCoreApplication::applicationFilePath()));
 }
 
-// 等价于 os.path.normcase：统一小写 + 反斜杠转正斜杠（Qt 的路径用 '/'，注册表用 '\\'）。
+// 开关状态比对用：统一小写 + 分隔符归一，只关心指向是否同一个文件，
+// 与存的是正斜杠还是反斜杠无关（老版本写下的正斜杠值也能对上）。
 QString normcase(const QString& path) {
     QString out = path.toLower();
     out.replace(QLatin1Char('\\'), QLatin1Char('/'));
