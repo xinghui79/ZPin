@@ -52,7 +52,10 @@ rem Refuse to start while ZPin is running. The running exe AND the Qt/CRT DLLs i
 rem has mapped are locked, so the "rmdir /S /Q dist\ZPin" below only manages to
 rem delete the unlocked half (models, plugins, translations) and the exe copy then
 rem fails -- leaving a broken, half-empty package on disk. Observed for real.
-tasklist /FI "IMAGENAME eq ZPin.exe" 2>nul | find /I "ZPin.exe" >nul
+rem Absolute path: when PATH puts Git Bash / MSYS ahead of System32, bare
+rem "find" resolves to GNU find, which chokes on /I -- the guard then silently
+rem passes and packaging proceeds onto locked files. Observed for real.
+tasklist /FI "IMAGENAME eq ZPin.exe" 2>nul | %SystemRoot%\System32\find.exe /I "ZPin.exe" >nul
 if not errorlevel 1 (
     echo [错误] ZPin 正在运行，请先在托盘里退出再打包
     goto :err
@@ -131,7 +134,11 @@ if "%VER%"=="" (
     goto :err
 )
 pushd "%OUT%"
-tar -a -c -f "..\ZPin_%VER%.zip" . || goto :err
+rem Absolute path: bare "tar" resolves to GNU tar when Git Bash / MSYS is ahead
+rem in PATH -- GNU tar cannot write zip at all, it silently writes a tar archive
+rem named .zip. bsdtar's zip writer also defaults to STORE (no compression),
+rem hence the deflate option.
+%SystemRoot%\System32\tar.exe --options zip:compression=deflate -a -c -f "..\ZPin_%VER%.zip" . || goto :err
 popd
 echo       发布包：dist\ZPin_%VER%.zip（发 GitHub Release 时作为资产上传；
 echo       自动更新按 tag 比版本、取首个 .zip 下载换装）
