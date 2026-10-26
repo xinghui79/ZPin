@@ -62,6 +62,7 @@ private:
     LatencySamples m_ms;               // 单次查询耗时（含穿透切换）
     qint64 m_total = 0;
     qint64 m_cooldownSkips = 0;
+    bool m_restoreWarned = false;      // 恢复样式失败只报一次，避免每次查询刷屏
 };
 
 }  // namespace snap

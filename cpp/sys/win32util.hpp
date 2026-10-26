@@ -46,6 +46,10 @@ bool excludeFromCapture(Hwnd hwnd);
 // 期间窗口可能已被销毁，HWND 可能被系统复用）。
 bool isWindow(Hwnd hwnd);
 
+// 句柄是否属于本进程。HWND 被复用给**别的进程**的窗口时，往它上面写扩展样式
+// 会改坏别人的窗口（工作线程恢复临时穿透样式前必须同时验这一条）。
+bool isOwnWindow(Hwnd hwnd);
+
 // 把可换出页移出工作集（SetProcessWorkingSetSize(-1,-1)）。
 bool trimWorkingSet();
 

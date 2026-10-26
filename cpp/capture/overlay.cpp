@@ -250,6 +250,12 @@ void SelectionController::releaseKeyboardGrab() {
 void SelectionController::cancel() {
     if (!m_active)
         return;
+    // 会话被收掉的原因必须留痕：否则「截图自己退了」只能靠猜。state 与选区尺寸
+    // 是区分「误触取消/热键重入」和「已画好再确认」的最小证据。
+    log::info("zpin.sel", QStringLiteral("会话取消（state=%1，选区 %2×%3）")
+                              .arg(m_state)
+                              .arg(qRound(m_rect.width()))
+                              .arg(qRound(m_rect.height())));
     teardown();
     emit cancelled();
 }
@@ -265,6 +271,12 @@ void SelectionController::confirm(const QString& action) {
     }
     QImage base = m_base.copy(crop);
     QImage img = base;  // 隐式共享：没画标注时两者同一份缓冲，一次拷贝都不多花
+    log::info("zpin.sel", QStringLiteral("会话确认：%1（%2×%3 @ %4,%5）")
+                              .arg(action.isEmpty() ? QStringLiteral("copy") : action)
+                              .arg(crop.width())
+                              .arg(crop.height())
+                              .arg(crop.x())
+                              .arg(crop.y()));
     QJsonArray doc;
     if (m_annot->engine() && !m_annot->engine()->shapes.empty()) {
         // 留档要的是「干净底图 + 以选区为原点」的标注文档，重开历史条目才能接着改；
@@ -303,7 +315,8 @@ QWidget* SelectionController::dialogParent() {
     return windowAt(m_cursor);
 }
 
-void SelectionController::start(const QString& mode) {
+bool SelectionController::start(const QString& mode) {
+    Q_UNUSED(mode)  // 目前所有入口共用同一套框选流程，保留参数以备按模式分化
     if (m_active)
         cancel();
     // 重入防护：若上一次截图的覆盖窗还在 deleteLater 排队中（尚未真正销毁），
@@ -324,7 +337,7 @@ void SelectionController::start(const QString& mode) {
     m_dpr = m_map.pieceAt(m_cursor).dpr;
     if (m_base.isNull()) {
         log::error("overlay", "截图底图抓取失败");
-        return;
+        return false;
     }
     m_state = "hover";
     m_rect = QRectF();
@@ -390,6 +403,7 @@ void SelectionController::start(const QString& mode) {
         // 会话期间所有按键都进覆盖层。
         focused->grabKeyboard();
     }
+    return true;
 }
 
 void SelectionController::teardown() {

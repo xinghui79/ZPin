@@ -13,6 +13,11 @@ namespace {
 // 单实例互斥体句柄：acquire 之后一直持有，releaseSingleInstance 显式放开
 HANDLE g_instanceMutex = nullptr;
 
+// MOD_NOREPEAT：按住热键时不重复投递 WM_HOTKEY（Win7+）。缺了它系统每 ~30ms
+// 重发一次，截图热键表现成「按着不放不断重开截图」——start 开头 m_active 就
+// cancel，正在进行的框选会被反复收掉。
+constexpr quint32 kModNoRepeat = 0x4000;
+
 // 注册表键路径统一成反斜杠（调用图方便写 '/'）
 std::wstring regPathW(const QString& keyPath) {
     QString p = keyPath;
@@ -102,6 +107,15 @@ bool excludeFromCapture(Hwnd hwnd) {
 
 bool isWindow(Hwnd hwnd) {
     return IsWindow(hwnd) != 0;
+}
+
+bool isOwnWindow(Hwnd hwnd) {
+    DWORD pid = 0;
+    if (!hwnd || hwnd == HWND_MESSAGE)  // 句柄 0 与「消息窗」伪句柄都不算本进程窗口
+        return false;
+    if (GetWindowThreadProcessId(hwnd, &pid) == 0)
+        return false;
+    return pid == GetCurrentProcessId();
 }
 
 Hwnd foregroundWindow() {
@@ -356,7 +370,9 @@ public:
     bool valid() const { return hwnd_ != nullptr; }
 
     bool bindHotkey(int id, quint32 mods, quint32 vk) {
-        return hwnd_ && RegisterHotKey(hwnd_, id, mods, vk) != FALSE;
+        // 一律补 MOD_NOREPEAT：组合键本身的语义就是「按一次触发一次」，自动
+        // 重复对截图/贴图这类动作毫无意义，只会把进行中的会话打断（见文件头常量注释）。
+        return hwnd_ && RegisterHotKey(hwnd_, id, mods | kModNoRepeat, vk) != FALSE;
     }
 
     void unbindHotkey(int id) {

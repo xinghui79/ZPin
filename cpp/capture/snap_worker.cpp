@@ -84,8 +84,18 @@ void SnapWorker::query(int id, int x, int y) {
     const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
     for (const auto& [hwnd, style] : saved) {
         auto* hwndPtr = reinterpret_cast<win32::Hwnd>(hwnd);
-        if (win32::isWindow(hwndPtr))
-            win32::exStyleSet(hwndPtr, style);
+        // 双重校验：窗口活着 + 仍是本进程的窗口。期间 UI 线程可能已结束会话销毁
+        // 遮罩窗，HWND 被系统复用给别的进程——只验存活会把样式写进无关窗口。
+        if (!win32::isWindow(hwndPtr) || !win32::isOwnWindow(hwndPtr))
+            continue;
+        if (!win32::exStyleSet(hwndPtr, style) && !m_restoreWarned) {
+            m_restoreWarned = true;
+            // 恢复失败 = 遮罩停在「穿透」状态，整块不可见也点不动，表现正是
+            // 「截图突然消失」。这类故障必须留痕，否则线上无从查起。
+            log::warn("overlay",
+                      QStringLiteral("恢复遮罩窗扩展样式失败 err=%1（吸附穿透可能残留）")
+                          .arg(win32::lastError()));
+        }
     }
 
     m_total++;

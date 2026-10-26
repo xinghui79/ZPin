@@ -1,7 +1,6 @@
 #include "controller.hpp"
 
 #include <QKeyEvent>
-#include <QMetaObject>
 #include <QPainter>
 #include <QPointer>
 #include <QThreadPool>
@@ -9,6 +8,7 @@
 #include "config.hpp"
 #include "engine.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "smart_erase.hpp"
 #include "text_edit.hpp"
 #include "toolbar.hpp"
@@ -164,7 +164,7 @@ void AnnotationController::positionToolbar() {
     double y = m_host->selRect().bottom() + 10;
     if (y + tb->height() > b.bottom())
         y = m_host->selRect().top() - tb->height() - 10;
-    x = qBound(b.left() + 4, x, b.right() - tb->width() - 4);
+    x = qBound(b.left() + 4, x, qMax(b.left() + 4, b.right() - tb->width() - 4));
     y = qMax(b.top() + 4, y);
     tb->move(qRound(x), qRound(y));
     tb->show();
@@ -535,16 +535,14 @@ void AnnotationController::kickSmartErase(const std::shared_ptr<SmartErase>& sha
             log::info("controller", QStringLiteral("智能擦除完成：%1 ms").arg(qRound(ms)));
         else
             log::warn("controller", QStringLiteral("智能擦除失败（%1 ms）").arg(qRound(ms)));
-        if (self)
-            QMetaObject::invokeMethod(
-                self,
-                [self, target, ok] {
-                    if (ok)
-                        self->m_host->updateAll();
-                    else
-                        self->dropSmartErase(target);  // 失败：红框占位别留在画布上
-                },
-                Qt::QueuedConnection);
+        mainthread::post([self, target, ok] {
+            if (self.isNull())
+                return;
+            if (ok)
+                self->m_host->updateAll();
+            else
+                self->dropSmartErase(target);  // 失败：红框占位别留在画布上
+        });
     });
 }
 

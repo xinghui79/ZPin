@@ -97,7 +97,9 @@ public:
     // 可见内容大一圈，吸附缓存用它把整窗矩形替换成内容矩形
     void setPinRectsProvider(std::function<QVector<rcore::WindowRect>()> provider);
 
-    void start(const QString& mode);
+    // 开启一次截图会话。返回 false = 连底图都抓不到（锁屏/UAC/独占全屏），
+    // 遮罩根本没建起来——调用方要出声，否则热键表现成「按了没反应」。
+    bool start(const QString& mode);
     void cancel() override;
     void confirm(const QString& action = QString()) override;
     // 收尾「点了但还没成」的会话：另存被取消、识别没出结果时**不要**调它，
@@ -211,13 +213,14 @@ private:
     void paintMask(OverlayWindow* window, QPainter& p, const QRectF& r);
     void paintGuides(OverlayWindow* window, QPainter& p, const QRect& geo, const QRectF& r);
     void paintHandles(QPainter& p, const QRectF& r, const QColor& accent);
-    void paintSizeLabel(QPainter& p, const QRectF& r);
+    void paintSizeLabel(QPainter& p, const QRectF& wr, const QRectF& r);
     void paintToast(OverlayWindow* window, QPainter& p);
     void drawCornerAnchors(QPainter& p, const QRectF& r, const QColor& color);
     void drawCrosshairIfEnabled(QPainter& p, const QRect& geo,
                                 const std::function<QPointF(const QPointF&)>& toLocal);
-    void drawLabel(QPainter& p, const QRectF& r, const QString& text, bool below = false,
-                   bool dim = false);
+    // wr = 窗口矩形（本地坐标）：标签一律夹在它之内，任何选区尺寸下都可见
+    void drawLabel(QPainter& p, const QRectF& wr, const QRectF& r, const QString& text,
+                   bool below = false, bool dim = false);
 
     QList<OverlayWindow*> m_windows;
     bool m_active = false;

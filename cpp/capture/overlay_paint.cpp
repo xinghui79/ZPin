@@ -53,13 +53,21 @@ void SelectionController::paintScreen(OverlayWindow* window, QPainter& p) {
     // 全屏十字线
     drawCrosshairIfEnabled(p, geo, toLocal);
 
-    // 边框
+    // 边框。选区贴窗口边时中线落在窗口外，一圈边框会被裁掉一半（整屏框选时
+    // 右边/下边直接看不见）；按半个笔宽内缩，保证四条边都在屏内可见。
+    // 跨屏选区（r 超出本窗）不能裁，否则会在本屏边缘画出多余的边线。
+    const QRectF wr(window->rect());
+    const QRectF clipped = r.intersected(wr);
+    QRectF borderRect = r;
+    if (clipped == r && clipped.width() > borderW && clipped.height() > borderW)
+        borderRect = clipped.adjusted(borderW / 2.0, borderW / 2.0, -borderW / 2.0,
+                                      -borderW / 2.0);
     p.setPen(QPen(accent, borderW));
     p.setBrush(Qt::NoBrush);
-    p.drawRect(r);
+    p.drawRect(borderRect);
 
-    paintHandles(p, r, accent);
-    paintSizeLabel(p, r);
+    paintHandles(p, borderRect, accent);
+    paintSizeLabel(p, wr, r);
     paintToast(window, p);
 }
 
@@ -150,10 +158,17 @@ void SelectionController::paintHoverLayer(OverlayWindow* window, QPainter& p, co
 
 void SelectionController::paintMask(OverlayWindow* window, QPainter& p, const QRectF& r) {
     // 遮罩：窗口区域减去选区，选区外盖半透明遮罩色
+    const QRectF wr(window->rect());
     QPainterPath windowPath;
-    windowPath.addRect(QRectF(window->rect()));
+    windowPath.addRect(wr);
+    // 选区盖满窗口时「窗口减选区」是空路径，遮罩一笔都画不出来——画面和桌面
+    // 完全一样，看起来就像已经退出截图。盖满时把挖空区向内收 1px，始终留一圈
+    // 暗边，作为「仍在截图」的最小视觉证据。
+    QRectF hole = r.intersected(wr);
+    if (hole.width() >= wr.width() - 0.5 && hole.height() >= wr.height() - 0.5)
+        hole = hole.adjusted(1, 1, -1, -1);
     QPainterPath selPath;
-    selPath.addRect(r);
+    selPath.addRect(hole);
     p.setPen(Qt::NoPen);
     p.setBrush(QBrush(QColor(config::getStr("Capture/mask_color"))));
     p.drawPath(windowPath.subtracted(selPath));
@@ -200,12 +215,12 @@ void SelectionController::paintHandles(QPainter& p, const QRectF& r, const QColo
     }
 }
 
-void SelectionController::paintSizeLabel(QPainter& p, const QRectF& r) {
+void SelectionController::paintSizeLabel(QPainter& p, const QRectF& wr, const QRectF& r) {
     // 选区上方的物理尺寸标签与（可选）快捷键提示
     const QRect pr = m_map.rectOf(m_rect);
-    drawLabel(p, r, QString("%1 × %2 px").arg(pr.width()).arg(pr.height()));
+    drawLabel(p, wr, r, QString("%1 × %2 px").arg(pr.width()).arg(pr.height()));
     if (config::getBool("Capture/show_hints"))
-        drawLabel(p, r, "Enter 复制 · Esc 取消", true, true);
+        drawLabel(p, wr, r, "Enter 复制 · Esc 取消", true, true);
 }
 
 void SelectionController::drawCornerAnchors(QPainter& p, const QRectF& r, const QColor& color) {
@@ -234,13 +249,26 @@ void SelectionController::drawCrosshairIfEnabled(
     p.drawLine(QPointF(c.x(), 0), QPointF(c.x(), geo.height()));
 }
 
-void SelectionController::drawLabel(QPainter& p, const QRectF& r, const QString& text,
-                                    bool below, bool dim) {
+void SelectionController::drawLabel(QPainter& p, const QRectF& wr, const QRectF& r,
+                                    const QString& text, bool below, bool dim) {
     const QFontMetrics fm = p.fontMetrics();
     const double w = fm.horizontalAdvance(text) + 16;
     const double h = fm.height() + 6;
-    const double x = r.left();
-    const double y = below ? r.bottom() + 6 : r.top() - h - 4;
+    constexpr double kGap = 6.0;    // 与选区边的间距
+    constexpr double kEdge = 4.0;   // 与窗口边缘的安全边距
+
+    // 水平：选区贴右边时标签会伸到屏幕外，夹回窗口内
+    const double x = qBound(kEdge, r.left(), qMax(kEdge, wr.right() - w - kEdge));
+
+    // 垂直：常规位置在选区外侧（上/下）；外侧越界（选区贴顶或贴底，整屏框选
+    // 必然如此）就翻到选区**内部**贴着那条边，再放不下才贴窗口边——保证永远可见。
+    // 旧实现固定画在外侧，框选一大标签就整体跑到屏幕外，屏幕上只剩桌面原样，
+    // 看起来像「截图自己退出了」。
+    double y = below ? r.bottom() + kGap : r.top() - h - kGap;
+    if (y < wr.top() + kEdge || y + h > wr.bottom() - kEdge)
+        y = below ? r.bottom() - h - kGap : r.top() + kGap;
+    y = qBound(kEdge, y, qMax(kEdge, wr.bottom() - h - kEdge));
+
     p.save();
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(20, 20, 24, 200));
