@@ -252,7 +252,6 @@ void PreferencesDialog::build() {
     addPage({"输出", prefsicon::Glyph::Output}, makePageShell(buildOutput(this)));
     auto* controlPage = makePageShell(buildControl(this));
     addPage({"快捷键", prefsicon::Glyph::Hotkey}, controlPage);
-    m_helpRow = m_nav->count();
     addPage({"帮助", prefsicon::Glyph::Help}, makePageShell(help::createHelpPage(m_stack)));
     m_aboutRow = m_nav->count();
     addPage({"关于", prefsicon::Glyph::About}, makePageShell(buildAbout(m_updateFlow)));
@@ -292,11 +291,6 @@ void PreferencesDialog::centerOnCursorScreen() {
     const QRect fr = frameGeometry();
     move(av.left() + (av.width() - fr.width()) / 2,
          av.top() + (av.height() - fr.height()) / 2);
-}
-
-void PreferencesDialog::showHelpPage() {
-    if (m_nav)
-        m_nav->setCurrentRow(m_helpRow);
 }
 
 void PreferencesDialog::showAboutPage() {

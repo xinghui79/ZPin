@@ -372,10 +372,6 @@ T* as(const ShapePtr& s) {
 QJsonObject shapeToJson(const ShapePtr& shape, const QPointF& origin = QPointF());
 ShapePtr shapeFromJson(const QJsonObject& obj, const QSize& baseSize);
 
-// 笔画路径描边出的实心区域（圆帽圆角）：马赛克/模糊/智能擦除的可见范围，
-// 也是智能擦除送给修复算法的 mask。drawClippedEffect 与控制器共用这一份。
-QPainterPath strokeRegion(const Stroke& s);
-
 // 画布在**当前 painter 坐标系**下的范围（把视口按世界变换反推回去）。
 // 聚光灯的暗区/引擎的合并暗区都要知道画布边界才能画「框外」。
 QRectF paintBounds(const QPainter& p);

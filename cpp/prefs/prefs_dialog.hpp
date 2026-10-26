@@ -38,8 +38,7 @@ public:
                       std::function<void(bool)> setHotkeysSuspended,
                       update::UpdateFlow* updateFlow, QWidget* parent = nullptr);
 
-    // 定位到帮助 / 关于页（托盘入口与更新气泡用）。
-    void showHelpPage();
+    // 定位到「关于」页（更新气泡点击时用）。
     void showAboutPage();
 
     // 登记一行热键编辑框与状态标签，并接上变更回调。
@@ -84,7 +83,6 @@ private:
     QWidget* m_body = nullptr;
     QListWidget* m_nav = nullptr;
     QStackedWidget* m_stack = nullptr;
-    int m_helpRow = 0;
     int m_aboutRow = 0;
     update::UpdateFlow* m_updateFlow = nullptr;   // 属 App，活得比本对话框久
     QMap<QString, HotkeyEdit*> m_edits;
