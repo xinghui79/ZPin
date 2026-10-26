@@ -22,14 +22,16 @@ QString previewName(const QString& tmpl);
 // 工具栏「保存」、「每次截图自动保存一份」补写的那份，全用这一个。
 QString defaultDir();
 
-// 按模板把图像异步保存到指定目录（不弹框）。回调在子线程调用：
-// 成功传完整路径、失败传空串。
+// 按模板把图像异步保存到指定目录（不弹框）。回调在**写盘线程**调用：
+// 成功传完整路径、失败传空串。回调里要碰界面或 App 成员，请经
+// mainthread::post 排回主线程（捕获对象用 QPointer，见该头文件）。
 void saveImageAsync(const QImage& img, const QString& ext = {},
                     const QString& directory = {},
                     std::function<void(QString)> onDone = {});
 
 // 弹出「另存为」确定路径后，在工作线程编码写盘。
-// 回调在子线程调用：成功传完整路径、失败传空串、用户取消传空 optional。
+// 回调在写盘线程调用：成功传完整路径、失败传空串、用户取消传空 optional
+// （取消是主线程同步回调，没起 worker）。
 void saveImageDialogAsync(const QImage& img, QWidget* parent = nullptr,
                           std::function<void(std::optional<QString>)> onDone = {});
 

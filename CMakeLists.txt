@@ -54,7 +54,7 @@ add_custom_target(rust_core ALL DEPENDS ${RUST_LIB})
 
 # ---- C++ 界面层：五个领域子目录，新文件放进对应目录即可被 glob 到 ----
 # app/   应用组装与共享业务服务（main/app/托盘/保存/历史/图标）
-# sys/   系统交互与基础设施（配置/日志/Win32/Rust桥/热键/自启/更新/内存）
+# sys/   系统交互与基础设施（配置/日志/Win32/Rust桥/热键/自启/更新/内存/主线程投递）
 # capture/  截图会话（选区/吸附/标注/拼接/OCR）
 # pin/   贴图窗口三件套
 # prefs/ 设置对话框、帮助页与其专属控件

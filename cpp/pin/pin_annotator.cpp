@@ -4,7 +4,6 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QList>
-#include <QMetaObject>
 #include <QPainter>
 #include <QPen>
 #include <QPointer>
@@ -19,6 +18,7 @@
 #include "config.hpp"
 #include "engine.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "pin_window.hpp"
 #include "smart_erase.hpp"
 #include "text_edit.hpp"
@@ -411,16 +411,15 @@ void PinAnnotator::kickSmartErase(const std::shared_ptr<SmartErase>& shape) {
             log::info("pin", QStringLiteral("智能擦除完成：%1 ms").arg(qRound(ms)));
         else
             log::warn("pin", QStringLiteral("智能擦除失败（%1 ms）").arg(qRound(ms)));
-        if (self)
-            QMetaObject::invokeMethod(
-                self,
-                [self, pin, target, ok] {
-                    if (ok)
-                        pin->update();
-                    else
-                        self->dropSmartErase(target);  // 失败：红框占位别留在贴图上
-                },
-                Qt::QueuedConnection);
+        mainthread::post([self, pin, target, ok] {
+            // 贴图窗与标注器是「同生共死」的一对，但排队期间谁先没都算正常退出
+            if (self.isNull() || pin.isNull())
+                return;
+            if (ok)
+                pin->update();
+            else
+                self->dropSmartErase(target);  // 失败：红框占位别留在贴图上
+        });
     });
 }
 

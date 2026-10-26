@@ -3,7 +3,6 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QElapsedTimer>
-#include <QMetaObject>
 #include <QMimeData>
 #include <QRegularExpression>
 #include <QRunnable>
@@ -12,6 +11,7 @@
 #include <QtGlobal>
 
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "rcore.hpp"
 
 namespace zpin::ocr {
@@ -26,9 +26,8 @@ public:
 
     void run() override {
         const Result result = m_work(m_img);
-        // 工作线程不碰界面：结果投递回主线程（qApp 住主线程）
-        QMetaObject::invokeMethod(qApp, [done = m_onDone, result] { done(result); },
-                                  Qt::QueuedConnection);
+        // 工作线程不碰界面：结果投递回主线程（调用方各自的 QPointer 守卫在回调里）
+        mainthread::post([done = m_onDone, result] { done(result); });
     }
 
 private:

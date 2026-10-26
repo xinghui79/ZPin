@@ -11,7 +11,6 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QMessageBox>
-#include <QMetaObject>
 #include <QPointer>
 #include <QProcess>
 #include <QRunnable>
@@ -22,6 +21,7 @@
 #include "config.hpp"
 #include "defaults.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "rcore.hpp"
 #include "rust/cxx.h"
 #include "win32util.hpp"
@@ -66,23 +66,20 @@ QThreadPool& pool() {
     return *g;
 }
 
-// 工作线程任务：跑完把结果投递回 flow 主线程。flow 由 App 持有，而 App 是
-// main 的栈对象——exec() 返回后 ~App 会先于拖网（最长一次网络超时几十秒）的
-// 池线程析构它，所以这里必须 QPointer 判活：flow 已亡就丢弃结果，退出路径
-// 不再对悬空指针 invokeMethod。
+// 工作线程任务：跑完把结果投递回主线程。flow 由 App 持有，而 App 是 main
+// 的栈对象——exec() 返回后 ~App 会先于拖网（最长一次网络超时几十秒）的池
+// 线程析构它，所以投递一律走 mainthread：落脚点活到进程结束，判活靠 lambda
+// 里捕获的 QPointer。
 class CheckTask : public QRunnable {
 public:
     CheckTask(UpdateFlow* flow, bool silent) : m_flow(flow), m_silent(silent) {}
 
     void run() override {
         const Latest latest = latestRelease();
-        UpdateFlow* flow = m_flow.data();
-        if (!flow)
-            return;
-        QMetaObject::invokeMethod(
-            flow,
-            [flow, latest, silent = m_silent] { flow->onChecked(latest, silent); },
-            Qt::QueuedConnection);
+        mainthread::post([flow = m_flow, latest, silent = m_silent] {
+            if (flow)
+                flow->onChecked(latest, silent);
+        });
     }
 
 private:
@@ -107,13 +104,10 @@ public:
 
 private:
     void post(const QString& sourceDir, const QString& error) {
-        UpdateFlow* flow = m_flow.data();
-        if (!flow)
-            return;
-        QMetaObject::invokeMethod(
-            flow,
-            [flow, sourceDir, error] { flow->onDownloaded(sourceDir, error); },
-            Qt::QueuedConnection);
+        mainthread::post([flow = m_flow, sourceDir, error] {
+            if (flow)
+                flow->onDownloaded(sourceDir, error);
+        });
     }
 
     QPointer<UpdateFlow> m_flow;

@@ -8,16 +8,18 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QMetaObject>
 #include <QPainter>
+#include <QPointer>
 #include <QSaveFile>
 #include <QThread>
 
 #include <algorithm>
+#include <chrono>
 
 #include "config.hpp"
 #include "engine.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 
 namespace zpin {
 
@@ -95,11 +97,23 @@ HistoryStore::HistoryStore(QObject* parent) : QObject(parent) {
 }
 
 HistoryStore::~HistoryStore() {
-    // 在途压缩任务的 invokeMethod 会解引用 this：等它们完成投递再析构
-    // （toPng 一张几十 ms，退出时最多阻塞这一会儿；投递完成后事件若还没
-    // 被 event loop 处理，会随对象销毁一起被清掉，安全）。
-    while (m_packing.load() > 0)
+    // 在途压缩 / 缩略图任务还没落地：等它们把结果投递完再析构，免得写完的
+    // PNG / 缩略图跟索引对不上。任务侧捕获的是 QPointer，对象先没了它会自己
+    // 丢弃结果，所以这里等的是「别丢工作」，不是「别崩」。
+    //
+    // 但必须有上限：慢盘 / 杀软占着文件时这里会永久自旋，进程就退不掉了，
+    // 用户只能强杀——强杀反而更可能打断正在写的 PNG，机制反噬自己。
+    //（output::drain() 给的是 5 秒。）等不到就放手。
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (m_packing->load() > 0) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            log::warn("history", QStringLiteral("等待压缩/缩略图收尾超过 2 秒（仍有 %1 个在途），"
+                                                "放弃等待")
+                                     .arg(m_packing->load()));
+            break;
+        }
         QThread::msleep(1);
+    }
     stores().removeAll(this);
 }
 
@@ -269,9 +283,12 @@ void HistoryStore::requestThumb(int id) {
     const QString baseFile = it->file;
     const QString docFile = it->docFile;
     m_thumbBusy.insert(id);
-    HistoryStore* self = this;
-    m_packing.fetch_add(1);  // 先计数再起任务：任务可能抢在前头跑完
-    QThreadPool::globalInstance()->start([self, id, baseFile, docFile]() {
+    // 任务里捕获两样东西，都不能是 this：QPointer 判活（对象可能先被析构），
+    // 计数用 shared_ptr（析构等不到时会放手走人，任务仍要能把它减回去）
+    QPointer<HistoryStore> self(this);
+    const auto packing = m_packing;
+    packing->fetch_add(1);  // 先计数再起任务：任务可能抢在前头跑完
+    QThreadPool::globalInstance()->start([self, packing, id, baseFile, docFile]() {
         QImage composed = readPng(baseFile);
         if (!composed.isNull() && !docFile.isEmpty())
             composed = compose(composed, readJsonArray(docFile));
@@ -279,9 +296,11 @@ void HistoryStore::requestThumb(int id) {
         QString thumbFile;
         if (!thumb.isNull() && writeBytes(thumbFor(id), toPng(thumb)))
             thumbFile = thumbFor(id);
-        QMetaObject::invokeMethod(self, "onThumb", Qt::QueuedConnection, Q_ARG(int, id),
-                                  Q_ARG(QString, thumbFile));
-        self->m_packing.fetch_sub(1);
+        mainthread::post([self, id, thumbFile] {
+            if (self)
+                self->onThumb(id, thumbFile);
+        });
+        packing->fetch_sub(1);
     });
 }
 
@@ -307,9 +326,11 @@ void HistoryStore::compressPending() {
             QImage img = it->img;
             const QString docFile = it->docFile;
             const int id = it->id;
-            HistoryStore* self = this;
-            m_packing.fetch_add(1);  // 先计数再起任务：任务可能抢在前头跑完
-            QThreadPool::globalInstance()->start([self, img, id, docFile]() {
+            // 同 requestThumb：QPointer 判活 + 独立计数，都不挂 this
+            QPointer<HistoryStore> self(this);
+            const auto packing = m_packing;
+            packing->fetch_add(1);  // 先计数再起任务：任务可能抢在前头跑完
+            QThreadPool::globalInstance()->start([self, packing, img, id, docFile]() {
                 QDir().mkpath(dirPath());
                 // 底图（画过标注时它是干净底图）压成 PNG 落盘，之后内存里不留字节
                 const QByteArray png = toPng(img);
@@ -325,10 +346,11 @@ void HistoryStore::compressPending() {
                 if (!thumb.isNull() && writeBytes(thumbFor(id), toPng(thumb)))
                     thumbFile = thumbFor(id);
                 // 结果回主线程应用（QImage 的压缩替换涉及共享数据，必须串行化）
-                QMetaObject::invokeMethod(self, "onPacked", Qt::QueuedConnection, Q_ARG(int, id),
-                                          Q_ARG(QString, file), Q_ARG(QString, thumbFile),
-                                          Q_ARG(QByteArray, png));
-                self->m_packing.fetch_sub(1);
+                mainthread::post([self, id, file, thumbFile, png] {
+                    if (self)
+                        self->onPacked(id, file, thumbFile, png);
+                });
+                packing->fetch_sub(1);
             });
         }
     }

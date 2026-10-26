@@ -73,7 +73,7 @@ signals:
     void newVersionFound(const QString& version);  // 静默检查命中新版本
 
 public slots:
-    // 工作线程任务跑完后经 QMetaObject::invokeMethod 队列到主线程调用。
+    // 工作线程任务跑完后经 mainthread::post 排到主线程调用。
     void onChecked(const Latest& latest, bool silent);
     void onDownloaded(const QString& sourceDir, const QString& error);
 

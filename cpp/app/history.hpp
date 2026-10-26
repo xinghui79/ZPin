@@ -15,6 +15,7 @@
 #include <QString>
 #include <QThreadPool>
 #include <atomic>
+#include <memory>
 #include <vector>
 
 namespace zpin {
@@ -132,9 +133,11 @@ private:
     std::vector<Item> m_items;      // 最新在前
     QSet<int> m_pending;
     QSet<int> m_thumbBusy;          // 正在补生成缩略图的条目（防重复起任务）
-    // 在途工作线程任务数（压 PNG / 补缩略图；投递完结果才减）：析构等它清零，
-    // 保证任务里 invokeMethod(this) 解引用的时刻对象还活着。
-    std::atomic<int> m_packing{0};
+    // 在途压缩 / 缩略图任务数（压 PNG / 补缩略图；结果投递完才减）：析构等它
+    // 清零，尽量让在途的落盘工作做完，但等是有上限的（见 history.cpp 的析构），
+    // 超时就放手——所以计数存成 shared_ptr 而不是成员值：任务那边仍要把它减
+    // 回去，计数必须活得比对象久，否则收尾那一下就在写已销毁的 this。
+    std::shared_ptr<std::atomic<int>> m_packing = std::make_shared<std::atomic<int>>(0);
 };
 
 // 广播：把新的条数/内存上限通知所有已创建的 store（首选项改配置后调用）。

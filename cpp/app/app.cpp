@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QCursor>
 #include <QProcess>
 #include <QScreen>
@@ -17,6 +18,7 @@
 #include "history_wall.hpp"
 #include "hotkey.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "memtrim.hpp"
 #include "ocr.hpp"
 #include "output.hpp"
@@ -35,14 +37,18 @@
 namespace zpin {
 
 App::App(QObject* parent) : QObject(parent) {
+    // 后台任务的投递落脚点趁还在主线程先建好（不必等 worker 首次 post 时懒建）
+    mainthread::warm();
     const QStringList& order = hotkey::actionOrder();
     for (const QString& action : order)
         m_accels.insert(action, config::hotkeyAccel(action));
 
     m_tray = new TrayController(m_accels, this);
     m_selector = new SelectionController(this);
-    m_selector->setPinRectsProvider([this] { return m_pins->pinSnapRects(); });
     m_pins = new PinManager(this);
+    // 提供者只在截图会话里被调用，但依赖顺序写死更稳：m_pins 先建好再接，
+    // 免得以后有人在构造期就触发一次查询而拿到空指针。
+    m_selector->setPinRectsProvider([this] { return m_pins->pinSnapRects(); });
     m_history = new HistoryStore(this);
     m_history->setLimits();
     // 历史条目一变，开着的历史墙立刻重铺（新截图落地、清空都走这里）
@@ -106,7 +112,9 @@ void App::startCapture(const QString& mode) {
         return;
     }
     memtrim::touch();
-    m_selector->start(mode);
+    if (!m_selector->start(mode))
+        emit notifyRequested(QStringLiteral("截图失败"),
+                             QStringLiteral("无法抓取屏幕画面（锁屏或被独占全屏）"));
 }
 
 void App::startScrollCapture(const QImage& first, const QRect& regionAbs,
@@ -218,10 +226,16 @@ void App::autoSaveCopy(const QImage& img) {
         return;
     // 失败必须出声：这条路径平时不给任何回执，目录失效（手改 ini 填了不存在的盘、
     // 或者只读目录）时用户会一直以为「在自动存」，直到某天发现文件根本不在。
-    output::saveImageAsync(img, {}, {}, [this](const QString& path) {
-        if (path.isEmpty())
-            emit notifyRequested(QStringLiteral("自动保存失败"),
-                                 QStringLiteral("检查 设置 → 输出 里的默认保存目录"));
+    // 回调在写盘线程：只把结论搬过去，提示回主线程再抛（见 mainthread::post）。
+    output::saveImageAsync(img, {}, {}, [self = QPointer<App>(this)](const QString& path) {
+        if (!path.isEmpty())
+            return;  // 成功是常态，这条路径不给回执
+        mainthread::post([self] {
+            if (self.isNull())
+                return;  // 排队期间 App 已析构：退出途中没人要这个提示了
+            emit self->notifyRequested(QStringLiteral("自动保存失败"),
+                                       QStringLiteral("检查 设置 → 输出 里的默认保存目录"));
+        });
     });
 }
 
@@ -238,8 +252,13 @@ void App::onCaptured(const QImage& img, const QImage& base, const QJsonArray& do
     if (action == QLatin1String("save")) {
         archive(base, doc, dpr);
         // 快速保存：直接写入默认目录（文件名模板 + 自动去重），气泡带回执
-        output::saveImageAsync(img, {}, {},
-                               [this](const QString& path) { notifySaved(path); });
+        output::saveImageAsync(
+            img, {}, {}, [self = QPointer<App>(this)](const QString& path) {
+                mainthread::post([self, path] {
+                    if (!self.isNull())
+                        self->notifySaved(path);
+                });
+            });
         return;
     }
     if (action == QLatin1String("save_as")) {
@@ -252,24 +271,35 @@ void App::onCaptured(const QImage& img, const QImage& base, const QJsonArray& do
         m_selector->releaseKeyboardGrab();
         output::saveImageDialogAsync(
             img, m_selector->dialogParent(),
-            [this, base, doc, dpr](const std::optional<QString>& path) {
+            [this, base, doc, dpr, self = QPointer<App>(this)](
+                const std::optional<QString>& path) {
                 if (!path) {
                     // 取消是主线程同步回调（没起 worker），可以直接把抓取收回来
                     m_selector->refocusOverlay();
                     emit notifyRequested(QStringLiteral("保存已取消"), QString());
                     return;
                 }
-                // 回调在写盘线程，经信号回主线程留档+收尾
-                emit saveLanded(base, doc, dpr);
-                notifySaved(*path);
+                // 走到这里是写盘线程：留档与收尾都排回主线程再做。
+                // QImage/QJsonArray 都是隐式共享，这层捕获只加引用计数。
+                mainthread::post([self, base, doc, dpr, saved = *path] {
+                    if (self.isNull())
+                        return;
+                    emit self->saveLanded(base, doc, dpr);
+                    self->notifySaved(saved);
+                });
             });
         return;
     }
     if (action == QLatin1String("ocr")) {
         // 识别文字：本地 PP-OCR 在后台线程跑（一次几十~几百毫秒）
-        ocr::recognizeAsync(img, [this](const std::optional<QString>& text) {
-            ocr::publishText(text, [this](const QString& title, const QString& body) {
-                m_tray->notify(title, body);
+        // 回调由 ocr.cpp 投回主线程，但那已是几十毫秒后的事，退出期 App 可能
+        // 已经不在了——与写盘回调同一套守卫。
+        ocr::recognizeAsync(img, [self = QPointer<App>(this)](
+                                    const std::optional<QString>& text) {
+            if (self.isNull())
+                return;
+            ocr::publishText(text, [self](const QString& title, const QString& body) {
+                self->m_tray->notify(title, body);
             });
             // 成功也不调 finishPending()：**不收选区**。识别结果已经进剪贴板，
             // 用户多半还想接着标注；早先成功就 teardown，把刚框的选区连同已画的
@@ -280,13 +310,16 @@ void App::onCaptured(const QImage& img, const QImage& base, const QJsonArray& do
     }
     if (action == QLatin1String("table")) {
         // 识别表格：版面 + 结构 + 单元格文字三趟，比识字更重，同样只在后台线程跑
-        ocr::recognizeTablesAsync(img, [this](const std::optional<QVector<rcore::OcrTable>>& tables) {
-            ocr::publishTables(tables, [this](const QString& title, const QString& body) {
-                m_tray->notify(title, body);
+        ocr::recognizeTablesAsync(
+            img, [self = QPointer<App>(this)](const std::optional<QVector<rcore::OcrTable>>& tables) {
+                if (self.isNull())
+                    return;
+                ocr::publishTables(tables, [self](const QString& title, const QString& body) {
+                    self->m_tray->notify(title, body);
+                });
+                // 同「识别文字」：不收选区，表格已经进剪贴板（可粘进 Excel/WPS），
+                // 选区与已画标注留着继续用
             });
-            // 同「识别文字」：不收选区，表格已经进剪贴板（可粘进 Excel/WPS），
-            // 选区与已画标注留着继续用
-        });
         return;
     }
     if (action == QLatin1String("scroll_result")) {
@@ -402,7 +435,12 @@ void App::saveFromHistory(int id) {
     const QImage img = m_history->get(id);
     if (img.isNull())
         return;
-    output::saveImageAsync(img, {}, {}, [this](const QString& path) { notifySaved(path); });
+    output::saveImageAsync(img, {}, {}, [self = QPointer<App>(this)](const QString& path) {
+        mainthread::post([self, path] {
+            if (!self.isNull())
+                self->notifySaved(path);
+        });
+    });
 }
 
 void App::copyFromHistory(int id) {
@@ -547,7 +585,6 @@ void App::restart() {
     // 以原命令行重启进程，当前实例退出。
     // 必须先放开单实例互斥体再拉新进程：新进程起来时本进程未必已经退干净，
     // 那时它会拿到 ERROR_ALREADY_EXISTS 而直接退出 —— 「重新启动」变成「直接退出」。
-    // （早先这里是先 startDetached 再 release，与这段注释说的正好相反。）
     win32::releaseSingleInstance();
     QProcess::startDetached(QCoreApplication::applicationFilePath(), {},
                             QCoreApplication::applicationDirPath());

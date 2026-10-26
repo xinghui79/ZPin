@@ -25,6 +25,7 @@
 #include "defaults.hpp"
 #include "engine.hpp"
 #include "logging.hpp"
+#include "mainthread.hpp"
 #include "ocr.hpp"
 #include "output.hpp"
 #include "pin_annotator.hpp"
@@ -510,7 +511,7 @@ void PinWindow::ocrText() {
     flashLabel(QStringLiteral("正在识别文字……"), 2500);
     // 识别在后台线程跑几十到几百毫秒，回调落地时贴图可能已被销毁（Del 键 /
     // 托盘销毁），裸 this 会写到已析构的对象上。QPointer 随析构自动置空。
-    // 回调本身在主线程（ocr.cpp 用 invokeMethod 投递回来），可直接用 w->m_manager。
+    // 回调本身在主线程（ocr.cpp 经 mainthread::post 投递回来），可直接用 w->m_manager。
     ocr::recognizeAsync(composite(), [w = QPointer<PinWindow>(this)](
                                     const std::optional<QString>& text) {
         if (w.isNull())
@@ -599,30 +600,35 @@ void PinWindow::sanitizeImage() {
 }
 
 void PinWindow::saveAs() {
-    // 写盘在工作线程（整屏 PNG 约 200ms），回调也在工作线程：两处都得管
-    //   1) QPointer 挡住「回调回来时贴图已被删」
-    //   2) 投递回主线程再发信号——m_manager 只在主线程用
-    // m_manager 在主线程取（PinWindow 由它持有，活得比窗口久），以它作
-    // invokeMethod 的 context：它若已析构，排队中的调用会随之作废。
-    PinManager* mgr = m_manager;
-    output::saveImageDialogAsync(composite(), this,
-                                 [w = QPointer<PinWindow>(this), mgr](
-                                     std::optional<QString> path) {
-        if (!path || w.isNull())
-            return;   // 用户取消 / 贴图已销毁：静默
-        if (path->isEmpty()) {
-            // 空串是约定好的「保存失败」（成功带路径、取消是 nullopt），不能跟
-            // 取消一样一声不吭——用户会以为存上了。
-            QMetaObject::invokeMethod(mgr, [mgr] {
+    // 写盘在工作线程（整屏 PNG 约 200ms），回调也在工作线程，三件事都得管：
+    //   1) 回调回来时贴图可能已被删（Del 键 / 托盘销毁）—— QPointer 随析构置空；
+    //   2) PinManager 同样只在主线程用；
+    //   3) 它也是 App 的子孙，退出期 output::drain() 等满 5 秒就会放弃等待放行，
+    //      进程随后结束，在途写盘写完仍会回调。所谓「回主线程」不能拿它当接收者，
+    //      那一发就打在已销毁的对象上。统一走 mainthread 的投递通道——落脚点是
+    //      活到进程结束的哨兵，落地时再判两个 QPointer。
+    QPointer<PinManager> mgr = m_manager;
+    output::saveImageDialogAsync(
+        composite(), this,
+        [w = QPointer<PinWindow>(this), mgr](std::optional<QString> path) {
+            if (!path)
+                return;   // 用户取消：主线程同步回调，什么都没发生
+            // 走到这里是写盘线程：结论先攒好，回主线程再动界面
+            const QString saved = *path;
+            mainthread::post([w, mgr, saved] {
+                if (w.isNull() || mgr.isNull())
+                    return;   // 贴图或管理器已经没了：这个回执没人要
+                if (saved.isEmpty()) {
+                    // 空串是约定好的「保存失败」（成功带路径、取消是 nullopt），
+                    // 不能跟取消一样一声不吭——用户会以为存上了。
+                    emit mgr->notify(QStringLiteral("贴图"),
+                                     QStringLiteral("保存失败：文件写入不了"));
+                    return;
+                }
                 emit mgr->notify(QStringLiteral("贴图"),
-                                 QStringLiteral("保存失败：文件写入不了"));
-            }, Qt::QueuedConnection);
-            return;
-        }
-        QMetaObject::invokeMethod(mgr, [mgr, p = *path] {
-            emit mgr->notify(QStringLiteral("贴图"), QStringLiteral("已保存：%1").arg(p));
-        }, Qt::QueuedConnection);
-    });
+                                 QStringLiteral("已保存：%1").arg(saved));
+            });
+        });
     // 原生对话框抢走激活后，标注工具条（不接焦点的 Tool 浮窗）会被重新激活的
     // 贴图窗压住、或还挂着模态阻塞；对话框一关就重新定位 + 置顶，取消另存为
     // 也能回到标注现场

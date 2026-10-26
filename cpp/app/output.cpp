@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QObject>
 #include <QSet>
 #include <QThread>
 #include <QtGlobal>
@@ -329,8 +330,8 @@ void saveImageDialogAsync(const QImage& img, QWidget* parent,
 }
 
 void drain() {
-    // 与 history.cpp 析构里的做法一致：自旋等在途任务收尾。写的是本地文件，
-    // 单张几百毫秒，退出时多等这一会儿远比留个截断文件划算。
+    // 与 history.cpp 析构里的做法一致：自旋等在途任务收尾，且都设了上限。
+    // 写的是本地文件，单张几百毫秒，退出时多等这一会儿远比留个截断文件划算。
     //
     // 但必须有上限：慢盘 / 杀软占着文件时主线程会永久自旋，那等于进程杀不掉，
     // 用户只能强杀——强杀又正好留下 drain 想防的截断文件，机制反噬自己。
