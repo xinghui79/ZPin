@@ -1,6 +1,6 @@
 # ZPin
 
-![Version](https://img.shields.io/badge/version-1.3.0-1E78D7)
+![Version](https://img.shields.io/badge/version-1.3.1-1E78D7)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
 ![C%2B%2B](https://img.shields.io/badge/C%2B%2B-20%20%2F%20Qt6%20Widgets-blue)
 ![Rust](https://img.shields.io/badge/Rust-核心%20(cxx%20桥)-orange)
@@ -9,7 +9,7 @@
 **Windows 截图标注 + 贴图工具。** C++20/Qt6 界面 + Rust 原生核心，
 免安装绿色版（一个文件夹）
 
-当前版本：**1.3.0**。版本号只有 `cpp/sys/defaults.hpp` 的 `VERSION` 一处：
+当前版本：**1.3.1**。版本号只有 `cpp/sys/defaults.hpp` 的 `VERSION` 一处：
 CMake 在 configure 时读它展开成 exe 的版本资源（`assets/zpin.rc` 是模板，
 构建期生成到 build 目录），关于页显示的也是同一个常量。
 

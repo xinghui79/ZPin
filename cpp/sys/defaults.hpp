@@ -24,7 +24,7 @@ const std::vector<Entry>& table();
 // 按键取默认值；键不存在时返回无效 QVariant（不应发生）。
 QVariant defaultValue(const QString& key);
 
-inline constexpr const char* VERSION = "1.3.0";   // 软件版本号（关于页/README 的唯一事实来源）
+inline constexpr const char* VERSION = "1.3.1";   // 软件版本号（关于页/README 的唯一事实来源）
 inline constexpr int CONFIG_VERSION = 11;         // v11：截图历史默认档位 50 条 / 30 MB
 
 // 界面字体默认值：table() 落盘的字符串与 fontTuple() 解析失败时的兜底共用这一份，
